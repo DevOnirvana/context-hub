@@ -67,8 +67,8 @@ Left: chat with agent selector (payments / credit) and authenticated toggle. Rig
 Acceptance: the full SPEC section 14 demo path is clickable end to end in replay mode.
 
 ## Step 8: Baselines and experiment harness
-backends/summary.py, backends/lww.py (LangGraph PostgresStore), scenarios/run_harness.py running scenarios 1 to 14 against S, SUM, LWW.
-Acceptance: a 14 x 3 pass/fail table is printed and saved to results/t1_t2.csv; optional LangSmith experiments created when tracing is on.
+Narrowed on 8 Nov (SPEC 17.38): backends/structured.py, backends/lww.py (plain PostgreSQL upsert with LangGraph store put semantics), scenarios/run_harness.py running scenarios 1 to 12 against S and LWW on its own database.
+Acceptance: a 12 x 2 pass/fail table is printed and saved to results/t2.csv, every cell that differs from the prediction marked and explained. SUM (T1) not built.
 
 ## Step 9: Demo hardening
 Record the full demo path into the cache (LLM_MODE=record once, then replay). README with run-of-show. Adversarial review of the diff by a subagent against SPEC.md, flagging only correctness gaps. Three clean end-to-end runs.

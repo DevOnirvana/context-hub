@@ -17,7 +17,7 @@ Before any design-related work, read `docs/SPEC.md`. Test scenarios: `docs/SCENA
 - Any user-facing text, docs or slide copy: no em dashes.
 
 ## Stack
-Python 3.12, PostgreSQL 16 (Homebrew, native, no Docker), psycopg 3, pydantic v2, Streamlit, anthropic SDK, pytest. Optional: langsmith (tracing and evaluation). langgraph plus langgraph-checkpoint-postgres are used ONLY for the latest-value-wins baseline in the T2 experiment.
+Python 3.12, PostgreSQL 16 (Homebrew, native, no Docker), psycopg 3, pydantic v2, Streamlit, anthropic SDK, pytest. Optional: langsmith (tracing and evaluation). No LangGraph: the T2 latest-value-wins baseline is a plain PostgreSQL upsert (SPEC 17.38).
 
 ## Commands
 - Setup: `python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`

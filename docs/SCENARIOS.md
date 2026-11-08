@@ -6,7 +6,7 @@
 ## Methods (same extraction model, same inputs, replay cache; no sampling parameters, SPEC 17.33)
 - S, the hub: `backends/structured.py`, a thin adapter over hub/interface.py.
 - SUM, summaries: after each session the model writes a summary; the next agent receives ALL summaries for the customer. No policy filtering. `backends/summary.py`.
-- LWW, latest value wins: LangGraph PostgresStore, namespace (customer_id,), one key per fact (e.g. callback_due, callback_status, disputed_amount, preference); each put on an existing key replaces the value. No policy filtering. `backends/lww.py`. Confirm replace-on-put behaviour in the LangGraph Python docs before quoting it.
+- LWW, latest value wins (LangGraph store put semantics): a plain PostgreSQL table with an upsert, namespace (customer_id,), one key per fact (e.g. callback_due, callback_status, disputed_amount, preference); each put on an existing key replaces the value. No policy filtering, no versions, no lifecycle rules. `backends/lww.py`. Built without LangGraph (SPEC 17.38): only the put semantics matter, so no extra dependency.
 
 All three implement one interface: `ingest(step)` and `context_for(agent_role, purpose, customer_id) -> ContextPacket`.
 
@@ -35,6 +35,18 @@ Scoring: S and LWW by deterministic checks on the packet. SUM packets are free t
 Predicted totals for scenarios 1 to 12: S 12, SUM 5, LWW 5. Scenarios 13 and 14 are agent-level tests of bounded agency and run against S only (14 is also run against SUM and LWW packets to show what would leak).
 
 Record ACTUAL results in `results/t1_t2.csv`, whatever they are. If a prediction is wrong, report it.
+
+## Measured (Step 8, 8 Nov 2026): T2 only
+`python -m scenarios.run_harness` runs scenarios 1 to 12 against S and LWW on its own database (context_hub_harness), with deterministic probes and no LLM calls. Both backends receive the same step stream, including system records (document uploads, dialler outcomes), the same acceptance decisions, and the same read-time rule (live facts are fetched from any stored reference). Full table: `results/t2.csv`.
+
+Measured: S 12/12, LWW 7/12 (predicted S 12, LWW 5). Two LWW cells differ from the prediction:
+- 3: the baseline receives the dialler record, and its latest callback_status (attempted_no_answer) answers the probe. The prediction assumed no dialler feed.
+- 10: the baseline stores the case's dispute_ref and fetches the status live, as the hub does. The prediction assumed it reads a copied status. The live-fact pattern, not the store, is what answers this probe.
+
+LWW fails 2 (no rule marks a miss), 6 (the original promise is overwritten), 7 (the refusal is overwritten), 9 (no access policy: UPI details reach the credit agent) and 12 (no admission test: health text stored).
+
+T1 (summaries, SUM) was not built and stays predicted. Scenarios 13 and 14 are covered by the Step 6 agent tests, against S only.
+Caveat for 11: no step closes the case (neither the hub interface nor the case mock can); the probe is about a customer-scope preference, which a closure would not touch.
 
 ## Honest caveats (for the deck)
 - The designer wrote both the hub and the test set, so S passing is expected. The test shows the failure modes of simpler designs; it does not prove general superiority. An independent benchmark (LongMemEval-style) is the engagement-level test.

@@ -9,6 +9,3 @@ pytest==9.2.0
 # Optional: tracing and experiment views. Never required for the demo.
 langsmith==0.14.17
 
-# Used ONLY for the latest-value-wins baseline in the T2 experiment (backends/lww.py).
-langgraph==1.2.20
-langgraph-checkpoint-postgres==3.2.0
