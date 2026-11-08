@@ -33,10 +33,11 @@ def case_memory(conn: Connection, customer_id: str, now: datetime) -> list[dict]
             versions = store.versions_as_of(conn, unit_id, now)
             for v, shown in zip(versions, lifecycle.displayed_statuses(versions)):
                 current = v.valid_to is None or v.valid_to > now
-                out.append({"case": case.case_id, "unit": unit_id, "v": v.version, "current": "yes" if current else "",
+                # The columns the demo points at come first, so they stay visible on a laptop screen.
+                out.append({"unit": unit_id, "v": v.version, "status": shown, "change_reason": v.change_reason,
+                            "due_at": fmt(v.due_at), "current": "yes" if current else "",
+                            "valid_from": fmt(v.valid_from), "valid_to": fmt(v.valid_to), "case": case.case_id,
                             "type": v.unit_type, "owner": v.owner or "", "action": v.action or "",
-                            "due_at": fmt(v.due_at), "status": shown, "change_reason": v.change_reason,
-                            "valid_from": fmt(v.valid_from), "valid_to": fmt(v.valid_to),
                             "payload": json.dumps(v.payload)})
     return out
 
@@ -66,6 +67,6 @@ def access_log(conn: Connection, *, after: int = 0, decision: str | None = None)
     rows = _rows(conn, "SELECT * FROM policy.access_log WHERE log_id > %s AND (%s::text IS NULL OR decision = %s) "
                        "ORDER BY log_id DESC", (after, decision, decision))
     # The decision first: on a narrow screen it is the column that must stay visible.
-    return [{"id": r["log_id"], "at": fmt(r["at"]), "case": r["case_id"] or "", "unit": r["unit_id"] or "",
-             "decision": r["decision"], "reason": r["reason"], "role": r["agent_role"], "purpose": r["purpose"]}
+    return [{"id": r["log_id"], "decision": r["decision"], "case": r["case_id"] or "", "unit": r["unit_id"] or "",
+             "at": fmt(r["at"]), "reason": r["reason"], "role": r["agent_role"], "purpose": r["purpose"]}
             for r in rows]

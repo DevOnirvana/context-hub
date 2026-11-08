@@ -35,6 +35,10 @@ PURPOSES = {"credit_agent": "card_dispute_servicing", "payments_agent": "payment
 # Record mode is CLI-only on purpose: the UI must not be able to overwrite the demo's replay cache.
 LLM_MODES = ["replay", "live"]
 ss = st.session_state
+# Key columns get room, so "existence_only" and "superseded" are never cut off.
+COLUMNS = {"decision": st.column_config.TextColumn(width="medium"),
+           "status": st.column_config.TextColumn(width="small"),
+           "change_reason": st.column_config.TextColumn(width="medium")}
 
 
 # --- state changes (button callbacks run before the page renders) ------------------------------
@@ -145,18 +149,18 @@ with st.sidebar:
     st.subheader(now.strftime("%a %d %b %Y, %H:%M IST"))
     cols = st.columns(2)
     for i, (label, t) in enumerate(JUMPS):
-        cols[i % 2].button(label, key=f"jump_{label}", on_click=go_to, args=(t,), use_container_width=True)
-    st.button("+15 min", key="plus_15", on_click=plus_15, use_container_width=True)
+        cols[i % 2].button(label, key=f"jump_{label}", on_click=go_to, args=(t,), width="stretch")
+    st.button("+15 min", key="plus_15", on_click=plus_15, width="stretch")
     st.divider()
     st.number_input("MISSED_THRESHOLD_MINUTES (applies on the next jump)", min_value=0, max_value=240, step=5,
                     key="threshold")
     st.radio("LLM_MODE", LLM_MODES, key="llm_mode", horizontal=True, on_change=end_conversation,
              help="replay: recorded responses, no network. live: calls the API (costs money). "
                   "record is CLI-only.")
-    st.button("Reset demo", key="reset", on_click=go_to, args=(START,), use_container_width=True)
-    st.button("End conversation", key="end_conversation", on_click=end_conversation, use_container_width=True)
+    st.button("Reset demo", key="reset", on_click=go_to, args=(START,), width="stretch")
+    st.button("End conversation", key="end_conversation", on_click=end_conversation, width="stretch")
     st.divider()
-    st.button("Try to edit history", key="edit_history", on_click=try_to_edit_history, use_container_width=True,
+    st.button("Try to edit history", key="edit_history", on_click=try_to_edit_history, width="stretch",
               help="Runs UPDATE on events.log as hub_app, the agents' role.")
     if ss.edit_result:
         st.error(ss.edit_result)
@@ -177,7 +181,7 @@ with left:
         for n, turn in enumerate(WED_TURNS):
             st.button(f"Send: {turn.label}", key=f"turn_{n}", on_click=send,
                       args=(turn.text, turn.at, turn.label, n),
-                      disabled=n != ss.next_turn or now > turn.at, use_container_width=True)
+                      disabled=n != ss.next_turn or now > turn.at, width="stretch")
     for speaker, text in ss.chat:
         if speaker == "error":
             st.error(text)
@@ -193,16 +197,16 @@ with right:
     tabs = st.tabs(["Case memory", "Events", "Customer context", "Access log", "What the agent sees"])
     with tabs[0]:
         st.caption("Every version of every unit. A change is a new version; the old one gets valid_to.")
-        st.dataframe(queries.case_memory(ss.ui_conn, CUSTOMER, now), hide_index=True, use_container_width=True)
+        st.dataframe(queries.case_memory(ss.ui_conn, CUSTOMER, now), hide_index=True, width="stretch", column_config=COLUMNS)
     with tabs[1]:
         st.caption("Ordered by when it happened. occurred_at vs recorded_at: when it happened vs when the bank learned it.")
-        st.dataframe(queries.events(ss.ui_conn, CUSTOMER), hide_index=True, use_container_width=True)
+        st.dataframe(queries.events(ss.ui_conn, CUSTOMER), hide_index=True, width="stretch", column_config=COLUMNS)
     with tabs[2]:
-        st.dataframe(queries.customer_context(ss.ui_conn, CUSTOMER), hide_index=True, use_container_width=True)
+        st.dataframe(queries.customer_context(ss.ui_conn, CUSTOMER), hide_index=True, width="stretch", column_config=COLUMNS)
     with tabs[3]:
         decision = st.selectbox("Decision", ["all", "allow", "existence_only", "deny"], key="decision_filter")
         st.dataframe(queries.access_log(ss.ui_conn, decision=None if decision == "all" else decision),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch", column_config=COLUMNS)
     with tabs[4]:
         view = ss.view
         if view is None:
@@ -224,4 +228,4 @@ with right:
                 with st.expander(f"Tool: {call.name} {call.args}{' (refused)' if call.is_error else ''}"):
                     st.code(call.result, language="json")
             st.markdown("**Access-log rows written by this turn**")
-            st.dataframe(view["access"], hide_index=True, use_container_width=True)
+            st.dataframe(view["access"], hide_index=True, width="stretch", column_config=COLUMNS)
