@@ -209,3 +209,4 @@ Answers to the ambiguities raised before Step 1. Where this section differs from
 10. Dispute mock: investigation_initiated is effective from case creation (Mon 18:30); section 11 updated. ID formats stay as written (different business lines use different formats).
 11. Event erasure: out of scope; parked in LATER.md as erasure by per-customer key destruction.
 12. Timestamps: no `DEFAULT now()` anywhere. Every timestamp comes from the simulated clock. Example: a late dialler record has occurred_at 09:04 and recorded_at 09:40.
+13. Close-once trigger: on `case_memory.units` and `customer_context.items`, `valid_to` may change only from NULL to a non-null timestamp >= `valid_from`. Reopening (back to NULL) and re-closing at another time are refused with a clear error (SQLSTATE check_violation). The rule is a trigger, so it binds every role, the table owner included; the column grant alone would let hub_app rewrite history.

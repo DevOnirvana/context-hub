@@ -14,6 +14,31 @@ CREATE SCHEMA customer_context;
 CREATE SCHEMA archive;
 CREATE SCHEMA policy;
 
+-- Close-once rule for versioned tables (SPEC 17.13). hub_app may UPDATE valid_to, but the column
+-- grant alone would let it reopen a closed version (set back to NULL) or move a closure time,
+-- which rewrites history. This trigger allows exactly one change per row: NULL -> a timestamp
+-- >= valid_from. It fires for every role, including the owner. Used by case_memory.units and
+-- customer_context.items; it lives in case_memory only because a function needs some schema.
+CREATE FUNCTION case_memory.enforce_close_once() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.valid_to IS NOT DISTINCT FROM OLD.valid_to THEN
+        RETURN NEW;  -- valid_to untouched (no other column is updatable by hub_app anyway)
+    END IF;
+    IF OLD.valid_to IS NOT NULL THEN
+        RAISE EXCEPTION '%.%: version % is already closed at %; a closed version is final (tried to set valid_to to %)',
+            TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.version, OLD.valid_to, coalesce(NEW.valid_to::text, 'NULL')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.valid_to < OLD.valid_from THEN
+        RAISE EXCEPTION '%.%: version % cannot close at % because it only became valid at %',
+            TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.version, NEW.valid_to, OLD.valid_from
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
 -- ---------------------------------------------------------------------------
 -- customer_context: customer-scope data (different scope, expiry and permission model)
 -- ---------------------------------------------------------------------------
@@ -48,6 +73,8 @@ CREATE TABLE customer_context.items (
 CREATE UNIQUE INDEX items_one_current ON customer_context.items (item_id) WHERE valid_to IS NULL;
 -- At most one current value per preference key per customer: a new value replaces, never coexists.
 CREATE UNIQUE INDEX items_one_current_key ON customer_context.items (customer_id, key) WHERE valid_to IS NULL;
+CREATE TRIGGER items_close_once BEFORE UPDATE ON customer_context.items
+    FOR EACH ROW EXECUTE FUNCTION case_memory.enforce_close_once();
 
 -- ---------------------------------------------------------------------------
 -- case_memory: claims and commitments, versioned, grouped by case
@@ -100,6 +127,8 @@ CREATE TABLE case_memory.units (
 -- Exactly one current version per unit. Together with the expected-version check in
 -- hub/store.py this is the optimistic-concurrency guard: two writers cannot both open version n+1.
 CREATE UNIQUE INDEX units_one_current ON case_memory.units (unit_id) WHERE valid_to IS NULL;
+CREATE TRIGGER units_close_once BEFORE UPDATE ON case_memory.units
+    FOR EACH ROW EXECUTE FUNCTION case_memory.enforce_close_once();
 CREATE INDEX units_by_case ON case_memory.units (case_id);
 CREATE INDEX units_by_customer ON case_memory.units (customer_id);
 
