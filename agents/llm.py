@@ -126,7 +126,8 @@ def load_config(env_file: Path = ROOT / ".env", *, mode: Mode | None = None, cac
         mode=chosen,
         model_id=values.get("MODEL_ID") or "claude-sonnet-5-5",
         extraction_model_id=values.get("EXTRACTION_MODEL_ID") or "claude-haiku-5-5",
-        budget_usd=float(values.get("LLM_BUDGET_USD") or 10),
+        # The shell may LOWER the budget for one run (a per-run cap, e.g. LLM_BUDGET_USD=0.5), never raise it.
+        budget_usd=min(float(values.get("LLM_BUDGET_USD") or 10), float(os.environ.get("LLM_BUDGET_USD") or "inf")),
         cache_dir=cache_dir or ROOT / ".llm_cache",
         usage_path=usage_path or ROOT / "results" / "llm_usage.csv",
         base_url=base_url or API_BASE_URL,
@@ -184,6 +185,13 @@ def cache_key(request: dict) -> str:
     return hashlib.sha256(canonical(request).encode("utf-8")).hexdigest()
 
 
+def content_to_params(message: Message) -> list[dict]:
+    """The assistant's content blocks, as sent back on the next request. One function for record
+    and replay, so both produce byte-identical requests (and the same cache key). Blocks go back
+    unchanged, thinking blocks included: Sonnet 5.5 checks that the history is append-only."""
+    return [block.model_dump(mode="json", exclude_none=True) for block in message.content]
+
+
 # --- the client wrapper ----------------------------------------------------------------------
 
 @dataclass
@@ -209,16 +217,25 @@ class LLM:
     @staticmethod
     def build_request(*, model: str, system: str, messages: list[dict], max_tokens: int,
                       tools: list[dict] | None = None, output_format: type[BaseModel] | None = None,
-                      thinking: dict | None = None, effort: str | None = None) -> dict:
+                      thinking: dict | None = None, effort: str | None = None,
+                      system_extra: str | None = None, cache_messages: bool = False) -> dict:
         """The exact body sent to the API, and the input to the cache key. No sampling parameters
         (SPEC 17.33). Prompt caching: the system prompt and the last tool carry cache_control, so
-        the stable prefix (tools, then system) is cached; per-call content goes in messages."""
+        the stable prefix (tools, then system) is cached; per-call content goes in messages.
+        system_extra is a second, uncached system block for per-customer instructions (the
+        reply-style preference), placed after the cached prefix so it never invalidates it.
+        cache_messages adds top-level automatic caching of the conversation so far, for agent
+        loops that resend a growing history on every step."""
         request: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": copy.deepcopy(messages),
         }
+        if system_extra:
+            request["system"].append({"type": "text", "text": system_extra})
+        if cache_messages:
+            request["cache_control"] = {"type": "ephemeral"}
         if tools:
             tools = copy.deepcopy(tools)
             tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}

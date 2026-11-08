@@ -7,3 +7,10 @@ wall_time_utc,mode,purpose,model,cache_key,input_tokens,cache_write_tokens,cache
 2026-11-08T11:52:50Z,record,extraction,claude-haiku-5-5,ff9320e26287bb87,33,0,1623,82,0.000061,0.000650
 2026-11-08T11:52:51Z,record,extraction,claude-haiku-5-5,ceaa01e0ed955fed,39,0,1623,88,0.000064,0.000714
 2026-11-08T11:52:53Z,record,extraction,claude-haiku-5-5,b03f1cf63edba706,52,0,1623,115,0.000079,0.000793
+2026-11-08T12:06:23Z,record,agent:credit_agent,claude-sonnet-5-5,f6f38a63fd934fbf,4,5064,0,116,0.013828,0.014621
+2026-11-08T12:06:26Z,record,agent:credit_agent,claude-sonnet-5-5,cf3d70afb3463531,2,361,5064,177,0.003183,0.017804
+2026-11-08T12:06:27Z,record,agent:credit_agent,claude-sonnet-5-5,9b8641a108d6403d,4,2929,5425,127,0.009143,0.026947
+2026-11-08T12:06:28Z,record,agent:credit_agent,claude-sonnet-5-5,c32bef57a830fde9,2,206,8354,35,0.001704,0.028651
+2026-11-08T12:06:30Z,record,agent:credit_agent,claude-sonnet-5-5,31fd3153efc0bbe2,4,3238,8560,112,0.010079,0.038730
+2026-11-08T12:06:32Z,record,agent:credit_agent,claude-sonnet-5-5,810533fe4c9f48fa,4,3281,11798,90,0.010290,0.049020
+2026-11-08T12:06:33Z,record,agent:credit_agent,claude-sonnet-5-5,d8f0774e8d5f6569,2,148,15079,58,0.002462,0.051482
