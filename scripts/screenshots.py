@@ -32,6 +32,11 @@ def click(page: Page, name: str) -> None:
     idle(page)
 
 
+def case_memory_table(page: Page):
+    """The Case memory table: the first dataframe on the page (the first tab)."""
+    return page.locator('[data-testid="stDataFrame"]').first
+
+
 def choose_agent(page: Page, role: str) -> None:
     page.locator('[data-testid="stSelectbox"]').first.click()
     page.get_by_role("option", name=role, exact=True).click()
@@ -72,9 +77,11 @@ def main() -> None:
             for jump in ("Mon 18:30", "Tue 16:00", "Tue 19:40", "Tue 20:15"):
                 click(page, jump)
             page.screenshot(path=RESULTS / "s7_1_superseded.png")
+            case_memory_table(page).screenshot(path=RESULTS / "s7_1_crop.png")
 
             click(page, "Wed 09:16")
             page.screenshot(path=RESULTS / "s7_2_missed.png")
+            case_memory_table(page).screenshot(path=RESULTS / "s7_2_crop.png")
 
             click(page, "Wed 10:00")
             page.get_by_role("tab", name="What the agent sees").click()
@@ -93,11 +100,13 @@ def main() -> None:
             page.mouse.move(1200, 900)  # no hover tooltip over the error
             page.wait_for_timeout(500)
             page.screenshot(path=RESULTS / "s7_4_edit_denied.png")
+            page.locator('[data-testid="stSidebar"] [data-testid="stAlert"]').screenshot(path=RESULTS / "s7_4_crop.png")
             browser.close()
     finally:
         app.terminate()
         app.wait(timeout=10)
-    for name in ("s7_1_superseded", "s7_2_missed", "s7_3_packets", "s7_4_edit_denied"):
+    for name in ("s7_1_superseded", "s7_1_crop", "s7_2_missed", "s7_2_crop", "s7_3_packets",
+                 "s7_4_edit_denied", "s7_4_crop"):
         print(f"saved results/{name}.png")
 
 

@@ -1,0 +1,3 @@
+# Demo polish: hide the Deploy button and the developer menu.
+[client]
+toolbarMode = "minimal"
