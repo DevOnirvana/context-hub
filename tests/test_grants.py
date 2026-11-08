@@ -1,18 +1,16 @@
 """Step 1 acceptance: the database, not the app, enforces what hub_app may change."""
-import os
-
 import psycopg
 import pytest
 from psycopg.errors import CheckViolation, InsufficientPrivilege
 from psycopg.types.json import Jsonb
 
-from tests.conftest import MON_1830
+from tests.conftest import APP_URL, MON_1830
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def case_and_unit(fresh_db):
     """Create one case and one claim as hub_app, the way scenario steps will (SPEC 17.4)."""
-    with psycopg.connect(os.environ["DATABASE_URL_APP"], autocommit=True) as conn:
+    with psycopg.connect(APP_URL, autocommit=True) as conn:
         conn.execute(
             """INSERT INTO case_memory.cases
                    (case_id, customer_id, business_line, case_type, opened_at)
