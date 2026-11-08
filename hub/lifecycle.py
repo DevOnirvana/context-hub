@@ -221,16 +221,50 @@ def decline_request(conn: Connection, *, customer_id: str, case_id: str | None, 
     ))
 
 
+def _current_item(conn: Connection, customer_id: str, key: str) -> ContextItem | None:
+    return next((i for i in store.current_items(conn, customer_id) if i.key == key), None)
+
+
+def _preference_event(conn: Connection, item: ContextItem, event_type: str, *, now: datetime,
+                      actor_type: Source, actor_id: str) -> int:
+    # The payload names the key, not the value: the item holds the content (one place to erase).
+    return store.append_event(conn, NewEvent(
+        customer_id=item.customer_id, event_type=event_type, actor_type=actor_type, actor_id=actor_id,
+        occurred_at=now, recorded_at=now, payload={"item_id": item.item_id, "key": item.key, "version": item.version},
+    ))
+
+
 def set_preference(conn: Connection, *, customer_id: str, key: str, value: str, now: datetime,
                    actor_type: Source, actor_id: str, source: Source = "customer") -> ContextItem:
-    """Store a customer-scope preference. Only the value is stored, never the reason given for it."""
+    """Store a customer-scope preference. Only the value is stored, never the reason given for it.
+
+    No current value: create (preference_set). A different value: replace (preference_replaced,
+    change_reason 'replacement'). The same value: nothing changes, nothing is written.
+    """
     with conn.transaction():
-        item = store.insert_item(conn, customer_id=customer_id, key=key, value=value, source=source, at=now)
-        store.append_event(conn, NewEvent(
-            customer_id=customer_id, event_type="preference_set", actor_type=actor_type, actor_id=actor_id,
-            occurred_at=now, recorded_at=now, payload={"item_id": item.item_id, "key": key},
-        ))
+        current = _current_item(conn, customer_id, key)
+        if current is not None and current.value == value:
+            return current
+        if current is None:
+            item = store.insert_item(conn, customer_id=customer_id, key=key, value=value, source=source, at=now)
+            _preference_event(conn, item, "preference_set", now=now, actor_type=actor_type, actor_id=actor_id)
+        else:
+            item = store.replace_item(conn, current.item_id, expected_version=current.version, value=value,
+                                      source=source, at=now)
+            _preference_event(conn, item, "preference_replaced", now=now, actor_type=actor_type, actor_id=actor_id)
     return item
+
+
+def withdraw_preference(conn: Connection, *, customer_id: str, key: str, now: datetime, actor_type: Source,
+                        actor_id: str) -> ContextItem:
+    """The customer withdraws a preference: close the current version with no successor (SPEC 17.21)."""
+    with conn.transaction():
+        current = _current_item(conn, customer_id, key)
+        if current is None:
+            raise ValueError(f"{customer_id}: no current preference {key!r} to withdraw")
+        store.withdraw_item(conn, current.item_id, expected_version=current.version, at=now)
+        _preference_event(conn, current, "preference_withdrawn", now=now, actor_type=actor_type, actor_id=actor_id)
+    return current
 
 
 # --- read-time derivations (never stored) -----------------------------------------------------
@@ -240,16 +274,15 @@ def is_overdue(unit: UnitVersion, now: datetime) -> bool:
     return unit.unit_type == "commitment" and unit.status == "active" and unit.due_at < now
 
 
+SHOWN_AS = {"reschedule": "superseded", "correction": "corrected", "replacement": "replaced"}
+
+
 def displayed_statuses(history: list[UnitVersion]) -> list[str]:
-    """Status to show for each version, oldest first (SPEC 17.2). A closed version shows as
-    superseded or corrected according to its successor's change_reason; otherwise its stored status."""
+    """Status to show for each unit version, oldest first (SPEC 17.2). A closed version shows as
+    superseded, corrected or replaced according to its successor's change_reason; otherwise its
+    stored status."""
     shown = []
     for i, version in enumerate(history):
         successor = history[i + 1] if i + 1 < len(history) else None
-        if successor is not None and successor.change_reason == "reschedule":
-            shown.append("superseded")
-        elif successor is not None and successor.change_reason == "correction":
-            shown.append("corrected")
-        else:
-            shown.append(version.status)
+        shown.append(SHOWN_AS.get(successor.change_reason, version.status) if successor else version.status)
     return shown

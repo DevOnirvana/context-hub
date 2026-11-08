@@ -1,5 +1,5 @@
 """Callback acceptance policy (SPEC 6, 17.7, 17.14, 17.15)."""
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from hub.acceptance import check_callback
 from hub.clock import IST
@@ -42,6 +42,30 @@ def test_past_time_late_evening_rolls_to_next_morning():
 
 def test_past_time_exactly_reaching_close_is_offered():
     assert check_callback(at(3, 20), at(3, 20, 30)).next_valid_slot == at(3, 21)
+
+
+def test_less_than_30_minutes_notice_is_too_soon():
+    # 10:00 asked at 09:59: declined, and the offer is what the queue can keep (10:30).
+    d = check_callback(at(4, 10), at(4, 9, 59))
+    assert (d.accepted, d.reason, d.next_valid_slot) == (False, "too_soon", at(4, 10, 30))
+
+
+def test_exactly_30_minutes_notice_is_accepted():
+    assert check_callback(at(4, 10, 29), at(4, 9, 59)).accepted
+
+
+def test_acceptance_and_offers_never_disagree():
+    """Every slot the code offers must itself pass check_callback (SPEC 17.20).
+    Sweeps 'now' across two days in 7-minute steps and asks for awkward times at each."""
+    start = at(2, 0)
+    for step in range(0, 2 * 24 * 60, 7):
+        now = start + timedelta(minutes=step)
+        for asked in (now - timedelta(hours=1), now + timedelta(minutes=5), now + timedelta(minutes=29),
+                      now + timedelta(hours=9), now + timedelta(days=8), now + timedelta(days=7, minutes=1)):
+            d = check_callback(asked, now)
+            if not d.accepted and d.next_valid_slot is not None:
+                again = check_callback(d.next_valid_slot, now)
+                assert again.accepted, (now, asked, d, again)
 
 
 def test_seven_day_limit_is_inclusive():

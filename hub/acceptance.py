@@ -17,7 +17,7 @@ SLOT = timedelta(minutes=15)   # offered slots fall on quarter-hours
 MIN_LEAD = timedelta(minutes=30)  # an offered slot is at least this far from now: a callback
                                   # queue cannot promise 10:00 at 09:59 (SPEC 17.14)
 
-Reason = Literal["ok", "in_the_past", "beyond_7_days", "outside_servicing_hours"]
+Reason = Literal["ok", "in_the_past", "too_soon", "beyond_7_days", "outside_servicing_hours"]
 
 
 class AcceptanceDecision(BaseModel):
@@ -46,11 +46,18 @@ def _ceil_slot(dt: datetime) -> datetime:
 
 
 def check_callback(due_at: datetime, now: datetime) -> AcceptanceDecision:
-    """Accept iff now < due_at <= now + 7 days and 08:00 <= local time <= 21:00."""
+    """Accept iff now + 30 min <= due_at <= now + 7 days and 08:00 <= local time <= 21:00.
+
+    The 30-minute notice is the same MIN_LEAD the offers use (SPEC 17.20), so acceptance and
+    offers never disagree: every slot this module offers would itself be accepted.
+    """
     due_at, now = to_ist(due_at), to_ist(now)
     if due_at <= now:
         return AcceptanceDecision(accepted=False, reason="in_the_past", due_at=due_at,
                                   next_valid_slot=next_valid_slot(now, now))
+    if due_at < now + MIN_LEAD:
+        return AcceptanceDecision(accepted=False, reason="too_soon", due_at=due_at,
+                                  next_valid_slot=next_valid_slot(due_at, now))
     if due_at > now + MAX_AHEAD:
         return AcceptanceDecision(accepted=False, reason="beyond_7_days", due_at=due_at,
                                   next_valid_slot=day7_slot(due_at, now))

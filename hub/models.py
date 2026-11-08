@@ -13,7 +13,7 @@ from hub.clock import to_ist
 ISTDateTime = Annotated[datetime, AfterValidator(to_ist)]
 
 Source = Literal["customer", "agent", "system"]
-ChangeReason = Literal["created", "reschedule", "correction", "status_change"]
+ChangeReason = Literal["created", "reschedule", "correction", "replacement", "status_change"]
 CommitmentStatus = Literal["active", "attempted", "fulfilled", "missed", "cancelled"]
 
 

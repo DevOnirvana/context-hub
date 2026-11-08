@@ -58,9 +58,10 @@ CREATE TABLE customer_context.items (
     key           text        NOT NULL,
     value         text        NOT NULL,
     source        text        NOT NULL CHECK (source IN ('customer', 'agent', 'system')),
-    -- Why this version exists. A closed version is shown as superseded or corrected
-    -- according to its successor's change_reason (SPEC 17.2).
-    change_reason text        NOT NULL CHECK (change_reason IN ('created', 'reschedule', 'correction', 'status_change')),
+    -- Why this version exists (SPEC 17.2, 17.21): correction = the earlier value was wrong;
+    -- reschedule = a commitment's time changed; replacement = a preference changed.
+    -- A closed version is displayed according to its successor's change_reason.
+    change_reason text        NOT NULL CHECK (change_reason IN ('created', 'reschedule', 'correction', 'replacement', 'status_change')),
     valid_from    timestamptz NOT NULL,
     valid_to      timestamptz,
     expires_at    timestamptz,
@@ -109,7 +110,7 @@ CREATE TABLE case_memory.units (
     source        text        NOT NULL CHECK (source IN ('customer', 'agent', 'system')),
     -- Restricted units are denied to every agent unless a policy rule explicitly allows them.
     sensitivity   text        NOT NULL DEFAULT 'normal' CHECK (sensitivity IN ('normal', 'restricted')),
-    change_reason text        NOT NULL CHECK (change_reason IN ('created', 'reschedule', 'correction', 'status_change')),
+    change_reason text        NOT NULL CHECK (change_reason IN ('created', 'reschedule', 'correction', 'replacement', 'status_change')),
     valid_from    timestamptz NOT NULL,
     valid_to      timestamptz,
     created_by    text        NOT NULL,

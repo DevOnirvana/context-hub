@@ -134,6 +134,10 @@ def insert_next_version(
         raise ValueError(f"{unit_id}: fields {sorted(unknown)} cannot change between versions")
     if change_reason == "created":
         raise ValueError("change_reason 'created' is only for version 1")
+    if change_reason == "replacement":
+        # Semantics (SPEC 17.21): replacement is for preferences only; claims are corrected,
+        # commitments are rescheduled or change status.
+        raise ValueError("change_reason 'replacement' is for customer-context items, not units")
     try:
         with conn.transaction():
             rows = _rows(
@@ -170,8 +174,8 @@ def insert_item(
     conn: Connection, *, customer_id: str, key: str, value: str, source: str, at: datetime,
     expires_at: datetime | None = None,
 ) -> ContextItem:
-    """Create version 1 of a preference. Replacing an existing value is a Step 3 question
-    (which change_reason it gets); until then the unique index refuses a second current value."""
+    """Create version 1 of a preference. A key that already has a current value must go through
+    replace_item instead; the unique index (one current value per key) refuses a second one."""
     n = conn.execute(
         "SELECT count(DISTINCT item_id) FROM customer_context.items WHERE customer_id = %s", (customer_id,)
     ).fetchone()[0]
@@ -185,6 +189,39 @@ def insert_item(
          item.change_reason, item.valid_from, item.valid_to, item.expires_at),
     )
     return item
+
+
+def replace_item(conn: Connection, item_id: str, *, expected_version: int, value: str, source: str,
+                 at: datetime) -> ContextItem:
+    """The preference changed (SPEC 17.21): close version n, insert n+1 with change_reason
+    'replacement'. Same expected-version check as units: lock, compare, close, insert."""
+    with conn.transaction():
+        rows = _rows(
+            conn,
+            f"SELECT {ITEM_COLUMNS} FROM customer_context.items WHERE item_id = %s AND valid_to IS NULL FOR UPDATE",
+            (item_id,),
+        )
+        if not rows or rows[0]["version"] != expected_version:
+            latest = conn.execute("SELECT max(version) FROM customer_context.items WHERE item_id = %s", (item_id,)).fetchone()[0]
+            raise StaleVersionError(item_id, expected_version, rows[0]["version"] if rows else latest)
+        current = ContextItem(**rows[0])
+        conn.execute(
+            "UPDATE customer_context.items SET valid_to = %s WHERE item_id = %s AND version = %s",
+            (at, item_id, expected_version),
+        )
+        new = current.model_copy(update={"version": expected_version + 1, "value": value, "source": source,
+                                         "change_reason": "replacement", "valid_from": at, "valid_to": None})
+        conn.execute(
+            f"INSERT INTO customer_context.items ({ITEM_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (new.item_id, new.version, new.customer_id, new.key, new.value, new.source,
+             new.change_reason, new.valid_from, new.valid_to, new.expires_at),
+        )
+    return new
+
+
+def item_history(conn: Connection, item_id: str) -> list[ContextItem]:
+    rows = _rows(conn, f"SELECT {ITEM_COLUMNS} FROM customer_context.items WHERE item_id = %s ORDER BY version", (item_id,))
+    return [ContextItem(**r) for r in rows]
 
 
 def withdraw_item(conn: Connection, item_id: str, *, expected_version: int, at: datetime) -> None:

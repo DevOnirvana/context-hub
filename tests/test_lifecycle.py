@@ -205,3 +205,46 @@ def test_claim_correction_keeps_v1_as_corrected(conn):
     assert lifecycle.displayed_statuses(history) == ["corrected", "active"]
     assert [v.payload["amount_inr"] for v in history] == [8500, 5800]
     assert event_types(conn, claim.unit_id) == ["claim_recorded", "claim_corrected"]
+
+
+# --- preferences: created, replaced, withdrawn (SPEC 17.21) ----------------------------------
+
+def _pref(conn, value, now):
+    return lifecycle.set_preference(conn, customer_id="CUST-001", key="preferred_explanation_style", value=value,
+                                    now=now, actor_type="agent", actor_id="payments_agent")
+
+
+def _pref_events(conn):
+    return [e.event_type for e in store.list_events(conn, customer_id="CUST-001") if e.event_type.startswith("preference_")]
+
+
+def test_preference_change_is_a_replacement(conn):
+    v1 = _pref(conn, "simple English", TUE_2015)
+    v2 = _pref(conn, "Hindi", wed(10))
+    assert (v2.item_id, v2.version, v2.change_reason) == (v1.item_id, 2, "replacement")
+    old, new = store.item_history(conn, v1.item_id)
+    assert (old.valid_to, new.valid_to, new.value) == (wed(10), None, "Hindi")
+    assert _pref_events(conn) == ["preference_set", "preference_replaced"]
+
+
+def test_same_preference_value_writes_nothing(conn):
+    _pref(conn, "simple English", TUE_2015)
+    before = counts(conn), len(store.item_history(conn, "CUST-001-C1"))
+    _pref(conn, "simple English", wed(10))
+    assert (counts(conn), len(store.item_history(conn, "CUST-001-C1"))) == before
+
+
+def test_withdrawal_closes_without_successor(conn):
+    item = _pref(conn, "simple English", TUE_2015)
+    lifecycle.withdraw_preference(conn, customer_id="CUST-001", key="preferred_explanation_style", now=wed(10),
+                                  actor_type="agent", actor_id="credit_agent")
+    assert store.current_items(conn, "CUST-001") == []
+    (only,) = store.item_history(conn, item.item_id)
+    assert only.valid_to == wed(10)
+    assert _pref_events(conn) == ["preference_set", "preference_withdrawn"]
+
+
+def test_replacement_is_refused_for_units(conn, wed_callback):
+    with pytest.raises(ValueError, match="customer-context items"):
+        store.insert_next_version(conn, wed_callback.unit_id, expected_version=2, changes={}, change_reason="replacement",
+                                  at=wed(10), created_by="test")
