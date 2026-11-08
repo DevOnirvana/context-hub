@@ -120,7 +120,7 @@ def test_paid_call_logs_usage_and_cost(tmp_path):
     usage = {"input_tokens": 1000, "output_tokens": 200, "cache_creation_input_tokens": 600, "cache_read_input_tokens": 0}
     LLM(config(tmp_path, "live"), client_factory=lambda c: FakeClient(message(usage=usage))).call(
         purpose="extraction", output_format=Echo, **REQ)
-    (row,) = list(csv.DictReader((tmp_path / "usage.csv").open()))
+    (row,) = list(csv.DictReader((tmp_path / "usage.csv").read_text().splitlines()))
     expected = (1000 * 0.10 + 600 * 0.125 + 200 * 0.50) / 1e6
     assert (row["mode"], row["model"], row["cache_write_tokens"]) == ("live", "claude-haiku-5-5", "600")
     assert float(row["cost_usd"]) == pytest.approx(expected) and float(row["cumulative_usd"]) == pytest.approx(expected)
@@ -149,7 +149,7 @@ def test_refusal_is_raised_and_still_logged(tmp_path):
     with pytest.raises(LLMRefused):
         LLM(config(tmp_path, "record"), client_factory=lambda c: FakeClient(message(stop="refusal"))).call(
             purpose="agent", output_format=Echo, **REQ)
-    assert len(list(csv.DictReader((tmp_path / "usage.csv").open()))) == 1  # billed, so logged
+    assert len(list(csv.DictReader((tmp_path / "usage.csv").read_text().splitlines()))) == 1  # billed, so logged
     assert not (tmp_path / "cache").exists()                                 # never replayed
 
 

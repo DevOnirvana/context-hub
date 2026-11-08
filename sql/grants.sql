@@ -13,6 +13,10 @@ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'hub_archiver') THEN
         CREATE ROLE hub_archiver LOGIN;
     END IF;
+    -- hub_ui: the demo UI's audit tabs. Reads only.
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'hub_ui') THEN
+        CREATE ROLE hub_ui LOGIN;
+    END IF;
 END
 $$;
 
@@ -38,3 +42,11 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA events, policy TO hub_app;
 -- INSERT only: it can store a transcript but cannot read one back.
 GRANT USAGE ON SCHEMA archive TO hub_archiver;
 GRANT INSERT ON archive.conversations TO hub_archiver;
+
+-- hub_ui -----------------------------------------------------------------------------
+-- SELECT only, on exactly what the audit tabs show (case memory and its versions, events,
+-- customer context, the access log). An operator's view, separate from the agents' path, and
+-- unable to change anything. No archive access: transcripts stay write-only.
+GRANT USAGE ON SCHEMA case_memory, events, customer_context, policy TO hub_ui;
+GRANT SELECT ON case_memory.cases, case_memory.units, events.log, customer_context.customers,
+                customer_context.items, policy.access_log TO hub_ui;

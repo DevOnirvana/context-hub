@@ -32,6 +32,7 @@ TEST_DB = "contexthub_test"
 ADMIN_URL = make_conninfo(os.environ["DATABASE_URL_ADMIN"], dbname=TEST_DB)
 APP_URL = make_conninfo(os.environ["DATABASE_URL_APP"], dbname=TEST_DB)
 ARCHIVER_URL = make_conninfo(os.environ["DATABASE_URL_ARCHIVER"], dbname=TEST_DB)
+UI_URL = make_conninfo(os.environ["DATABASE_URL_APP"], dbname=TEST_DB, user="hub_ui")
 
 
 @pytest.fixture(scope="session")

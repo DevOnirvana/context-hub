@@ -143,3 +143,22 @@ def test_superseded_is_not_a_stored_status(app_conn, case_and_unit):
 def test_seed_has_customer_and_rules_but_no_cases(fresh_db):
     # Cases are created by the timeline, not seeded (SPEC 17.4). Counts were taken right after reset.
     assert fresh_db == {"customers": 1, "rules": 5, "cases": 0}
+
+
+def test_hub_ui_reads_audit_tables_and_changes_nothing(case_and_unit):
+    """Step 7: the UI's audit tabs connect as hub_ui, which can read and nothing else."""
+    from tests.conftest import UI_URL
+    case_id, unit_id = case_and_unit
+    with psycopg.connect(UI_URL, autocommit=True) as conn:
+        for table in ("case_memory.cases", "case_memory.units", "events.log", "customer_context.customers",
+                      "customer_context.items", "policy.access_log"):
+            conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+        for statement in (
+            "INSERT INTO events.log (customer_id, event_type, actor_type, actor_id, occurred_at, recorded_at) "
+            "VALUES ('CUST-001', 'x', 'system', 'ui', now(), now())",
+            f"UPDATE case_memory.units SET valid_to = valid_from WHERE unit_id = '{unit_id}'",
+            "SELECT count(*) FROM archive.conversations",
+            "SELECT count(*) FROM policy.rules",
+        ):
+            with pytest.raises(InsufficientPrivilege):
+                conn.execute(statement)
