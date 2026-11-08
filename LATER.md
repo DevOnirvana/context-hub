@@ -5,3 +5,4 @@
 - Policy decisions via a dedicated policy engine.
 - Hub exposed as a network service.
 - Versioned agent instructions in LangSmith Context Hub.
+- Merchant-name allowlist for the sensitive-data check: in the Step 5 recorded run, both the extractor and the keyword backstop flagged "Apollo Hospital Pharmacy" as health, so a legitimate duplicate-charge claim is lost (SPEC 17.17).

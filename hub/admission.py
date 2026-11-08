@@ -42,8 +42,8 @@ KNOWN_SENSITIVE_CATEGORIES = frozenset({
 })
 
 # Test 3 keyword backstop (SPEC 17.17). Fail-closed: a false positive rejects, by design.
-# Known false positive: "Apollo Hospital Pharmacy" (a merchant name). The Step 5 extractor's
-# categories will refine it; until then losing that claim is cheaper than storing health data.
+# Known false positive: "Apollo Hospital Pharmacy" (a merchant name). The Step 5 extractor flags
+# it as health too (recorded run, 8 Nov 2026); losing that claim is cheaper than storing health data.
 SENSITIVE_KEYWORDS = {
     "health": re.compile(
         r"\b(hospital\w*|diagnos\w*|illness\w*|surgery|doctor\w*|medical|medication\w*|"

@@ -3,7 +3,7 @@
 - T1: Structured memory (the hub) gives the next agent fully correct context more often than conversation summaries.
 - T2: Type-aware updates give fully correct context more often than latest-value-wins.
 
-## Methods (same extraction model, temperature 0, same inputs)
+## Methods (same extraction model, same inputs, replay cache; no sampling parameters, SPEC 17.33)
 - S, the hub: `backends/structured.py`, a thin adapter over hub/interface.py.
 - SUM, summaries: after each session the model writes a summary; the next agent receives ALL summaries for the customer. No policy filtering. `backends/summary.py`.
 - LWW, latest value wins: LangGraph PostgresStore, namespace (customer_id,), one key per fact (e.g. callback_due, callback_status, disputed_amount, preference); each put on an existing key replaces the value. No policy filtering. `backends/lww.py`. Confirm replace-on-put behaviour in the LangGraph Python docs before quoting it.
@@ -12,7 +12,7 @@ All three implement one interface: `ingest(step)` and `context_for(agent_role, p
 
 ## Pass rule
 A method passes a scenario only if the context packet answers the probe fully and correctly.
-Scoring: S and LWW by deterministic checks on the packet. SUM packets are free text: grade with the model at temperature 0 against the expected answer (recorded in the replay cache), and Baan spot-checks every SUM verdict.
+Scoring: S and LWW by deterministic checks on the packet. SUM packets are free text: grade with the extraction model (no sampling parameters, SPEC 17.33) against the expected answer (recorded in the replay cache), and Baan spot-checks every SUM verdict.
 
 ## Scenarios
 | # | Steps | Probe | Correct context | Predicted S / SUM / LWW |

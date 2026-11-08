@@ -1,0 +1,9 @@
+wall_time_utc,mode,purpose,model,cache_key,input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,cost_usd,cumulative_usd
+2026-11-08T11:52:44Z,record,extraction,claude-haiku-5-5,630c5388e2925339,54,1623,0,168,0.000292,0.000292
+2026-11-08T11:52:46Z,record,extraction,claude-haiku-5-5,12ea5666969cc336,35,0,1623,82,0.000061,0.000353
+2026-11-08T11:52:47Z,record,extraction,claude-haiku-5-5,ca1a9248c9cafa88,33,0,1623,84,0.000062,0.000415
+2026-11-08T11:52:48Z,record,extraction,claude-haiku-5-5,674e5c943fe19696,38,0,1623,84,0.000062,0.000477
+2026-11-08T11:52:49Z,record,extraction,claude-haiku-5-5,177a9884a2955d40,61,0,1623,179,0.000112,0.000589
+2026-11-08T11:52:50Z,record,extraction,claude-haiku-5-5,ff9320e26287bb87,33,0,1623,82,0.000061,0.000650
+2026-11-08T11:52:51Z,record,extraction,claude-haiku-5-5,ceaa01e0ed955fed,39,0,1623,88,0.000064,0.000714
+2026-11-08T11:52:53Z,record,extraction,claude-haiku-5-5,b03f1cf63edba706,52,0,1623,115,0.000079,0.000793
