@@ -1,0 +1,14 @@
+{
+  "CUST-001": {
+    "card_dispute": {
+      "case_id": "CASE-CARD-001",
+      "business_line": "payments",
+      "refs": {"dispute_ref": "DSP-1001", "card_last4": "4417"}
+    },
+    "upi_failed_debit": {
+      "case_id": "PAY-2042",
+      "business_line": "payments",
+      "refs": {"upi_ref": "UPI-7781"}
+    }
+  }
+}

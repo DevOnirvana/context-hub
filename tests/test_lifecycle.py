@@ -21,7 +21,7 @@ def wed(hour, minute=0, second=0):
 
 @pytest.fixture
 def conn(app_conn):
-    store.create_case(app_conn, Case(case_id=CASE, customer_id="CUST-001", business_line="credit",
+    store.create_case(app_conn, Case(case_id=CASE, customer_id="CUST-001", business_line="payments",
                                      case_type="card_dispute", opened_at=MON_1830))
     return app_conn
 

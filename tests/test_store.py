@@ -13,7 +13,7 @@ from tests.conftest import APP_URL, MON_1830
 
 @pytest.fixture
 def claim(app_conn):
-    store.create_case(app_conn, Case(case_id="CASE-CARD-001", customer_id="CUST-001", business_line="credit",
+    store.create_case(app_conn, Case(case_id="CASE-CARD-001", customer_id="CUST-001", business_line="payments",
                                      case_type="card_dispute", opened_at=MON_1830))
     return store.insert_unit(app_conn, NewUnit(case_id="CASE-CARD-001", customer_id="CUST-001", unit_type="claim",
                                                payload={"amount_inr": 8500}, source="customer",

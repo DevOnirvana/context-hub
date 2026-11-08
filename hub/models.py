@@ -25,6 +25,15 @@ class Case(BaseModel):
     opened_at: ISTDateTime
     closed_at: ISTDateTime | None = None
 
+    def is_open(self, now: datetime) -> bool:
+        return self.closed_at is None or self.closed_at > now
+
+
+class UnitRef(BaseModel):
+    """Points at the version a caller saw, for the expected-version check."""
+    unit_id: str
+    expected_version: int
+
 
 class NewUnit(BaseModel):
     """A claim or commitment before the store gives it an ID and version 1."""
@@ -89,3 +98,5 @@ class Candidate(BaseModel):
     sensitive_categories: list[str] = Field(default_factory=list)
     scope_suggestion: Literal["session", "case", "customer"] | None = None
     source: Source
+    # Set when the customer corrects an earlier claim ("actually it was Rs 5,800").
+    corrects: UnitRef | None = None

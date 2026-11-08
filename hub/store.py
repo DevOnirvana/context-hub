@@ -269,3 +269,88 @@ def list_events(
         {"customer_id": customer_id, "case_id": case_id, "unit_id": unit_id},
     )
     return [Event(**r) for r in rows]
+
+
+# --- as-of reads for get_context (SPEC 17.4: nothing later than now is visible) ----------------
+
+def get_case(conn: Connection, case_id: str) -> Case | None:
+    rows = _rows(conn, "SELECT * FROM case_memory.cases WHERE case_id = %s", (case_id,))
+    return Case(**rows[0]) if rows else None
+
+
+def cases_as_of(conn: Connection, customer_id: str, now: datetime) -> list[Case]:
+    return [Case(**r) for r in _rows(
+        conn, "SELECT * FROM case_memory.cases WHERE customer_id = %s AND opened_at <= %s ORDER BY opened_at, case_id",
+        (customer_id, now),
+    )]
+
+
+def units_as_of(conn: Connection, case_id: str, now: datetime) -> list[UnitVersion]:
+    """The version of each unit that was current at `now`."""
+    rows = _rows(
+        conn,
+        f"""SELECT {UNIT_COLUMNS} FROM case_memory.units
+            WHERE case_id = %(case_id)s AND valid_from <= %(now)s AND (valid_to IS NULL OR valid_to > %(now)s)
+            ORDER BY unit_id""",
+        {"case_id": case_id, "now": now},
+    )
+    return [UnitVersion(**r) for r in rows]
+
+
+def versions_as_of(conn: Connection, unit_id: str, now: datetime) -> list[UnitVersion]:
+    """Every version that existed by `now`, oldest first."""
+    rows = _rows(conn, f"SELECT {UNIT_COLUMNS} FROM case_memory.units WHERE unit_id = %s AND valid_from <= %s ORDER BY version",
+                 (unit_id, now))
+    return [UnitVersion(**r) for r in rows]
+
+
+def items_as_of(conn: Connection, customer_id: str, now: datetime) -> list[ContextItem]:
+    rows = _rows(
+        conn,
+        f"""SELECT {ITEM_COLUMNS} FROM customer_context.items
+            WHERE customer_id = %(c)s AND valid_from <= %(now)s AND (valid_to IS NULL OR valid_to > %(now)s)
+              AND (expires_at IS NULL OR expires_at > %(now)s)
+            ORDER BY key""",
+        {"c": customer_id, "now": now},
+    )
+    return [ContextItem(**r) for r in rows]
+
+
+def events_as_of(conn: Connection, *, customer_id: str, case_id: str | None, now: datetime) -> list[Event]:
+    """Events the hub had learned of by `now` (recorded_at), for one case, or customer-scope
+    events when case_id is None. Ordered by when they happened."""
+    rows = _rows(
+        conn,
+        f"""SELECT {EVENT_COLUMNS} FROM events.log
+            WHERE customer_id = %(c)s AND recorded_at <= %(now)s
+              AND ((%(case)s::text IS NULL AND case_id IS NULL) OR case_id = %(case)s)
+            ORDER BY occurred_at, event_id""",
+        {"c": customer_id, "case": case_id, "now": now},
+    )
+    return [Event(**r) for r in rows]
+
+
+def case_refs(conn: Connection, case_id: str, now: datetime) -> dict[str, str]:
+    """References stored when the case was opened (SPEC 17.23)."""
+    row = conn.execute(
+        """SELECT payload -> 'refs' FROM events.log
+           WHERE case_id = %s AND event_type = 'case_opened' AND recorded_at <= %s ORDER BY event_id LIMIT 1""",
+        (case_id, now),
+    ).fetchone()
+    return (row[0] or {}) if row else {}
+
+
+# --- policy --------------------------------------------------------------------------------
+
+def load_rules(conn: Connection) -> list[dict]:
+    # Read on every call, so a rule added live in the UI applies to the next get_context.
+    return _rows(conn, "SELECT agent_role, purpose, case_type, sensitivity, decision FROM policy.rules")
+
+
+def log_access(conn: Connection, *, at: datetime, agent_id: str, agent_role: str, purpose: str, customer_id: str,
+               case_id: str | None, unit_id: str | None, decision: str, reason: str) -> None:
+    conn.execute(
+        """INSERT INTO policy.access_log (at, agent_id, agent_role, purpose, customer_id, case_id, unit_id, decision, reason)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (at, agent_id, agent_role, purpose, customer_id, case_id, unit_id, decision, reason),
+    )
