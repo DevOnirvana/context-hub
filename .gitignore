@@ -1,0 +1,7 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+# .llm_cache/ and results/ are tracked on purpose: replay mode needs the cache in the repo.

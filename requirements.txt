@@ -1,0 +1,14 @@
+# Top-level dependencies, pinned after a clean install on 8 Nov 2026 (Python 3.12).
+psycopg[binary]==3.3.8
+pydantic==2.14.3
+streamlit==1.67.0
+anthropic==2.6.0
+python-dotenv==1.2.4
+pytest==9.2.0
+
+# Optional: tracing and experiment views. Never required for the demo.
+langsmith==0.14.17
+
+# Used ONLY for the latest-value-wins baseline in the T2 experiment (backends/lww.py).
+langgraph==1.2.20
+langgraph-checkpoint-postgres==3.2.0
