@@ -9,6 +9,7 @@ from pathlib import Path
 REQUIRED_KEYS = {
     "DATABASE_URL_ADMIN",
     "DATABASE_URL_APP",
+    "DATABASE_URL_ARCHIVER",
     "ANTHROPIC_API_KEY",
     "MODEL_ID",
     "EXTRACTION_MODEL_ID",

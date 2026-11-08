@@ -1,0 +1,12 @@
+{
+  "UPI-7781": {
+    "customer_id": "CUST-001",
+    "amount_inr": 4200,
+    "payee": "Ramesh K",
+    "transaction_date": "2026-11-03",
+    "timeline": [
+      {"status": "debit_failed", "effective_at": "2026-11-03T19:10:00+05:30"},
+      {"status": "pending_reversal", "effective_at": "2026-11-03T19:12:00+05:30"}
+    ]
+  }
+}

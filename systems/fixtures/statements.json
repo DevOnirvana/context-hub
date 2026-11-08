@@ -1,0 +1,15 @@
+{
+  "4417": {
+    "customer_id": "CUST-001",
+    "statement_date": "2026-11-01",
+    "due_date": "2026-11-21",
+    "total_due_inr": 32480,
+    "minimum_due_inr": 1620,
+    "disputed_amount_inr": 8500,
+    "disputed_note": "UrbanCart TXN-9002, under dispute DSP-1001",
+    "adjustments": [
+      {"effective_at": "2026-11-04T08:00:00+05:30", "type": "provisional_credit", "amount_inr": 8500,
+       "total_due_inr": 23980, "minimum_due_inr": 1200}
+    ]
+  }
+}

@@ -1,0 +1,305 @@
+Context Hub walkthrough: SPEC section 13, scripted, no LLM
+Customer CUST-001 (synthetic). MISSED_THRESHOLD_MINUTES = 15. Dialler profile: none.
+
+====================================================================================================
+STEP 1: Mon 18:30 payments: dispute, promise, callback 9 PM   (clock Mon 02 Nov 18:30 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 active (due Tue 03 Nov 21:00)
+  [events] 5 new
+    #1 Mon 02 Nov 18:30 agent:payments_agent case_opened [CASE-CARD-001] {"refs": {"card_last4": "4417", "dispute_ref": "DSP-1001"}}
+    #2 Mon 02 Nov 18:30 agent:payments_agent claim_recorded [CASE-CARD-001-U1] {}
+    #3 Mon 02 Nov 18:30 agent:payments_agent customer_informed [CASE-CARD-001] {"message": "investigation has started"}
+    #4 Mon 02 Nov 18:30 agent:payments_agent commitment_created [CASE-CARD-001-U2] {"owner": "customer", "action": "upload_statement", "due_at": "2026-11-03T18:00:00+05:30"}
+    #5 Mon 02 Nov 18:30 agent:payments_agent commitment_created [CASE-CARD-001-U3] {"owner": "bank", "action": "callback", "due_at": "2026-11-03T21:00:00+05:30"}
+  [customer_context]
+    (none)
+  [archive] 1 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+  NEXT AGENT SEES (payments_agent, purpose payments_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 5 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v1 active due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v1 active due Tue 03 Nov 21:00
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: (none)
+    other cases: (none)
+  LIVE (fetched Mon 02 Nov 18:30 from systems of record; never stored):
+    dispute DSP-1001: investigation_initiated (since Mon 02 Nov 18:30)
+    statement 4417: due 21 Nov; total due Rs 32,480; minimum due Rs 1,620; disputed Rs 8,500; provisional credit Rs 0
+  CHECKS against SPEC 13:
+    ok   case CASE-CARD-001 opened on the payments line
+    ok   claim v1: charged twice, Rs 8,500
+    ok   communication event: customer told the investigation has started
+    ok   customer commitment: upload statement by Tue 18:00, active
+    ok   bank callback v1 active, due Tue 3 Nov 21:00
+
+====================================================================================================
+STEP 2: Tue 16:00 system: statement upload recorded   (clock Tue 03 Nov 16:00 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 active (due Tue 03 Nov 21:00)
+  [events] 2 new
+    #6 Tue 03 Nov 16:00 system:documents statement_upload_recorded [CASE-CARD-001] {"document": "bank_statement"}
+    #7 Tue 03 Nov 16:00 system:documents commitment_fulfilled [CASE-CARD-001-U2] {"to_status": "fulfilled", "from_status": "active", "evidence_event_id": 6}
+  [customer_context]
+    (none)
+  [archive] 1 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+  NEXT AGENT SEES (payments_agent, purpose payments_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 7 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v1 active due Tue 03 Nov 21:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: (none)
+    other cases: (none)
+  LIVE (fetched Tue 03 Nov 16:00 from systems of record; never stored):
+    dispute DSP-1001: investigation_initiated (since Mon 02 Nov 18:30)
+    statement 4417: due 21 Nov; total due Rs 32,480; minimum due Rs 1,620; disputed Rs 8,500; provisional credit Rs 0
+  CHECKS against SPEC 13:
+    ok   statement upload recorded by the documents system at Tue 16:00
+    ok   customer commitment fulfilled
+
+====================================================================================================
+STEP 3: Tue 19:40 payments: UPI failed debit   (clock Tue 03 Nov 19:40 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 active (due Tue 03 Nov 21:00)
+    PAY-2042 (payments, upi_failed_debit) opened Tue 03 Nov 19:40
+      PAY-2042-U1 claim v1 active: {"text": "UPI payment failed but money was debited", "payee": "Ramesh K", "amount_inr": 4200, "transaction_date": "2026-11-03"}
+  [events] 3 new
+    #8 Tue 03 Nov 19:40 agent:payments_agent case_opened [PAY-2042] {"refs": {"upi_ref": "UPI-7781"}}
+    #9 Tue 03 Nov 19:40 agent:payments_agent claim_recorded [PAY-2042-U1] {}
+    #10 Tue 03 Nov 19:40 agent:payments_agent customer_informed [PAY-2042] {"message": "reversal expected by T+1"}
+  [customer_context]
+    (none)
+  [archive] 2 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+    CONV-002 payments_agent Tue 03 Nov 19:40 (2 turns)
+  NEXT AGENT SEES (payments_agent, purpose payments_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 7 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v1 active due Tue 03 Nov 21:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    case PAY-2042 (payments, upi_failed_debit); 3 events (0 older left out)
+      PAY-2042-U1 claim v1 active
+      references: upi UPI-7781 via get_upi_status
+    customer context: (none)
+    other cases: (none)
+  LIVE (fetched Tue 03 Nov 19:40 from systems of record; never stored):
+    dispute DSP-1001: investigation_initiated (since Mon 02 Nov 18:30)
+    statement 4417: due 21 Nov; total due Rs 32,480; minimum due Rs 1,620; disputed Rs 8,500; provisional credit Rs 0
+    upi UPI-7781: pending_reversal
+  CHECKS against SPEC 13:
+    ok   case PAY-2042 opened on the payments line
+    ok   claim: UPI failed debit Rs 4,200 to Ramesh K
+    ok   communication event: reversal expected by T+1
+
+====================================================================================================
+STEP 4: Tue 20:15 payments: reschedule to 9 AM, simple English   (clock Tue 03 Nov 20:15 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 superseded (due Tue 03 Nov 21:00) -> v2 active (due Wed 04 Nov 09:00)
+    PAY-2042 (payments, upi_failed_debit) opened Tue 03 Nov 19:40
+      PAY-2042-U1 claim v1 active: {"text": "UPI payment failed but money was debited", "payee": "Ramesh K", "amount_inr": 4200, "transaction_date": "2026-11-03"}
+  [events] 2 new
+    #11 Tue 03 Nov 20:15 agent:payments_agent commitment_rescheduled [CASE-CARD-001-U3] {"to_due_at": "2026-11-04T09:00:00+05:30", "to_version": 2, "from_due_at": "2026-11-03T21:00:00+05:30", "from_version": 1}
+    #12 Tue 03 Nov 20:15 agent:payments_agent preference_set [customer] {"key": "preferred_explanation_style", "item_id": "CUST-001-C1", "version": 1}
+  [customer_context]
+    preferred_explanation_style = simple English (v1)
+  [archive] 3 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+    CONV-002 payments_agent Tue 03 Nov 19:40 (2 turns)
+    CONV-003 payments_agent Tue 03 Nov 20:15 (2 turns)
+  NEXT AGENT SEES (credit_agent, purpose card_dispute_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 8 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v2 active due Wed 04 Nov 09:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      history CASE-CARD-001-U3: superseded -> active
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: preferred_explanation_style = simple English
+    other cases: 1 other open case: Payments
+  LIVE (fetched Tue 03 Nov 20:15 from systems of record; never stored):
+    dispute DSP-1001: investigation_initiated (since Mon 02 Nov 18:30)
+    statement 4417: due 21 Nov; total due Rs 32,480; minimum due Rs 1,620; disputed Rs 8,500; provisional credit Rs 0
+  CHECKS against SPEC 13:
+    ok   callback v1 superseded, v2 active due Wed 4 Nov 09:00
+    ok   customer context: preferred_explanation_style = simple English (reason not stored)
+
+====================================================================================================
+STEP 5: Wed 09:15 clock sweep   (clock Wed 04 Nov 09:15 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 superseded (due Tue 03 Nov 21:00) -> v2 active (due Wed 04 Nov 09:00) -> v3 missed (due Wed 04 Nov 09:00)
+    PAY-2042 (payments, upi_failed_debit) opened Tue 03 Nov 19:40
+      PAY-2042-U1 claim v1 active: {"text": "UPI payment failed but money was debited", "payee": "Ramesh K", "amount_inr": 4200, "transaction_date": "2026-11-03"}
+  [events] 1 new
+    #13 Wed 04 Nov 09:15 system:lifecycle_sweep commitment_missed [CASE-CARD-001-U3] {"due_at": "2026-11-04T09:00:00+05:30", "to_status": "missed", "from_status": "active", "threshold_minutes": 15}
+  [customer_context]
+    preferred_explanation_style = simple English (v1)
+  [archive] 3 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+    CONV-002 payments_agent Tue 03 Nov 19:40 (2 turns)
+    CONV-003 payments_agent Tue 03 Nov 20:15 (2 turns)
+  NEXT AGENT SEES (credit_agent, purpose card_dispute_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 9 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v3 missed due Wed 04 Nov 09:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      history CASE-CARD-001-U3: superseded -> active -> missed
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: preferred_explanation_style = simple English
+    other cases: 1 other open case: Payments
+  LIVE (fetched Wed 04 Nov 09:15 from systems of record; never stored):
+    dispute DSP-1001: provisional_credit_issued (since Wed 04 Nov 08:00)
+    statement 4417: due 21 Nov; total due Rs 23,980; minimum due Rs 1,200; disputed Rs 8,500; provisional credit Rs 8,500
+  CHECKS against SPEC 13:
+    ok   no dialler record: callback v3 missed
+    ok   commitment_missed event, occurred 09:15
+
+====================================================================================================
+STEP 6: Wed 10:00 credit: missed callback, amount payable, new callback   (clock Wed 04 Nov 10:00 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 superseded (due Tue 03 Nov 21:00) -> v2 active (due Wed 04 Nov 09:00) -> v3 missed (due Wed 04 Nov 09:00)
+      CASE-CARD-001-U4 bank callback: v1 active (due Wed 04 Nov 16:00) {"follows_unit_id": "CASE-CARD-001-U3"}
+    PAY-2042 (payments, upi_failed_debit) opened Tue 03 Nov 19:40
+      PAY-2042-U1 claim v1 active: {"text": "UPI payment failed but money was debited", "payee": "Ramesh K", "amount_inr": 4200, "transaction_date": "2026-11-03"}
+  [events] 2 new
+    #14 Wed 04 Nov 10:00 agent:credit_agent customer_informed [CASE-CARD-001] {"message": "Sorry we missed your 9 AM call. The Rs 8,500 is under review and we have added it back for now, so this month you pay Rs 23,980."}
+    #15 Wed 04 Nov 10:00 agent:credit_agent commitment_created [CASE-CARD-001-U4] {"owner": "bank", "action": "callback", "due_at": "2026-11-04T16:00:00+05:30"}
+  [customer_context]
+    preferred_explanation_style = simple English (v1)
+  [archive] 4 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+    CONV-002 payments_agent Tue 03 Nov 19:40 (2 turns)
+    CONV-003 payments_agent Tue 03 Nov 20:15 (2 turns)
+    CONV-004 credit_agent Wed 04 Nov 10:00 (2 turns)
+  read-back to customer: "I've scheduled your callback for Wednesday 4 November at 4:00 PM. Is that right?"
+  NEXT AGENT SEES (credit_agent, purpose card_dispute_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 11 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v3 missed due Wed 04 Nov 09:00
+      CASE-CARD-001-U4 bank callback v1 active due Wed 04 Nov 16:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      history CASE-CARD-001-U3: superseded -> active -> missed
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: preferred_explanation_style = simple English
+    other cases: 1 other open case: Payments
+  LIVE (fetched Wed 04 Nov 10:00 from systems of record; never stored):
+    dispute DSP-1001: provisional_credit_issued (since Wed 04 Nov 08:00)
+    statement 4417: due 21 Nov; total due Rs 23,980; minimum due Rs 1,200; disputed Rs 8,500; provisional credit Rs 8,500
+  CHECKS against SPEC 13:
+    ok   credit agent sees CASE-CARD-001 only, a payments-line case (cross-line)
+    ok   context includes the claim, callback history with the miss, and the statement fulfilment
+    ok   context includes the simple English preference
+    ok   other case by existence only: '1 other open case: Payments'
+    ok   live dispute status fetched: provisional_credit_issued
+    ok   live statement fetched: payable Rs 23,980 after provisional credit
+    ok   new callback Wed 16:00 accepted, linked to the missed one
+
+====================================================================================================
+STEP 7: Wed 10:05 credit: prompt injection attempt   (clock Wed 04 Nov 10:05 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 superseded (due Tue 03 Nov 21:00) -> v2 active (due Wed 04 Nov 09:00) -> v3 missed (due Wed 04 Nov 09:00)
+      CASE-CARD-001-U4 bank callback: v1 active (due Wed 04 Nov 16:00) {"follows_unit_id": "CASE-CARD-001-U3"}
+    PAY-2042 (payments, upi_failed_debit) opened Tue 03 Nov 19:40
+      PAY-2042-U1 claim v1 active: {"text": "UPI payment failed but money was debited", "payee": "Ramesh K", "amount_inr": 4200, "transaction_date": "2026-11-03"}
+  [events] 0 new
+  [customer_context]
+    preferred_explanation_style = simple English (v1)
+  [archive] 5 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+    CONV-002 payments_agent Tue 03 Nov 19:40 (2 turns)
+    CONV-003 payments_agent Tue 03 Nov 20:15 (2 turns)
+    CONV-004 credit_agent Wed 04 Nov 10:00 (2 turns)
+    CONV-005 credit_agent Wed 04 Nov 10:05 (2 turns)
+  NEXT AGENT SEES (credit_agent, purpose card_dispute_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 11 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v3 missed due Wed 04 Nov 09:00
+      CASE-CARD-001-U4 bank callback v1 active due Wed 04 Nov 16:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      history CASE-CARD-001-U3: superseded -> active -> missed
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: preferred_explanation_style = simple English
+    other cases: 1 other open case: Payments
+  LIVE (fetched Wed 04 Nov 10:05 from systems of record; never stored):
+    dispute DSP-1001: provisional_credit_issued (since Wed 04 Nov 08:00)
+    statement 4417: due 21 Nov; total due Rs 23,980; minimum due Rs 1,200; disputed Rs 8,500; provisional credit Rs 8,500
+  CHECKS against SPEC 13:
+    ok   injection: no UPI details in what the hub returned
+    ok   access log shows existence_only for PAY-2042
+
+====================================================================================================
+STEP 8: Wed 10:08 credit: interest waiver request   (clock Wed 04 Nov 10:08 IST)
+====================================================================================================
+  [case_memory]
+    CASE-CARD-001 (payments, card_dispute) opened Mon 02 Nov 18:30
+      CASE-CARD-001-U1 claim v1 active: {"text": "Charged twice for the same transaction", "merchant": "UrbanCart", "amount_inr": 8500, "transaction_ids": ["TXN-9001", "TXN-9002"], "transaction_date": "2026-10-31"}
+      CASE-CARD-001-U2 customer upload_statement: v1 active (due Tue 03 Nov 18:00) -> v2 fulfilled (due Tue 03 Nov 18:00)
+      CASE-CARD-001-U3 bank callback: v1 superseded (due Tue 03 Nov 21:00) -> v2 active (due Wed 04 Nov 09:00) -> v3 missed (due Wed 04 Nov 09:00)
+      CASE-CARD-001-U4 bank callback: v1 active (due Wed 04 Nov 16:00) {"follows_unit_id": "CASE-CARD-001-U3"}
+    PAY-2042 (payments, upi_failed_debit) opened Tue 03 Nov 19:40
+      PAY-2042-U1 claim v1 active: {"text": "UPI payment failed but money was debited", "payee": "Ramesh K", "amount_inr": 4200, "transaction_date": "2026-11-03"}
+  [events] 1 new
+    #16 Wed 04 Nov 10:08 agent:credit_agent escalated_to_human [CASE-CARD-001] {"reason": "interest waiver request", "packet_as_of": "2026-11-04T10:08:00+05:30"}
+  [customer_context]
+    preferred_explanation_style = simple English (v1)
+  [archive] 6 transcript(s), audit only, never read by agents
+    CONV-001 payments_agent Mon 02 Nov 18:30 (4 turns)
+    CONV-002 payments_agent Tue 03 Nov 19:40 (2 turns)
+    CONV-003 payments_agent Tue 03 Nov 20:15 (2 turns)
+    CONV-004 credit_agent Wed 04 Nov 10:00 (2 turns)
+    CONV-005 credit_agent Wed 04 Nov 10:05 (2 turns)
+    CONV-006 credit_agent Wed 04 Nov 10:08 (2 turns)
+  NEXT AGENT SEES (credit_agent, purpose card_dispute_servicing):
+    case CASE-CARD-001 (payments, card_dispute); 12 events (0 older left out)
+      CASE-CARD-001-U1 claim v1 active
+      CASE-CARD-001-U2 customer upload_statement v2 fulfilled due Tue 03 Nov 18:00
+      CASE-CARD-001-U3 bank callback v3 missed due Wed 04 Nov 09:00
+      CASE-CARD-001-U4 bank callback v1 active due Wed 04 Nov 16:00
+      history CASE-CARD-001-U2: active -> fulfilled
+      history CASE-CARD-001-U3: superseded -> active -> missed
+      references: statement 4417 via get_statement; dispute DSP-1001 via get_dispute_status
+    customer context: preferred_explanation_style = simple English
+    other cases: 1 other open case: Payments
+  LIVE (fetched Wed 04 Nov 10:08 from systems of record; never stored):
+    dispute DSP-1001: provisional_credit_issued (since Wed 04 Nov 08:00)
+    statement 4417: due 21 Nov; total due Rs 23,980; minimum due Rs 1,200; disputed Rs 8,500; provisional credit Rs 8,500
+  CHECKS against SPEC 13:
+    ok   interest waiver escalated to a human, payload holds references only
+    ok   no promise made: no new commitment
+
+RESULT: all checks passed

@@ -1,0 +1,17 @@
+{
+  "CUST-001": {
+    "none": [],
+    "attempted_no_answer": [
+      {"unit_id": "CASE-CARD-001-U3", "case_id": "CASE-CARD-001", "outcome": "attempted_no_answer",
+       "occurred_at": "2026-11-04T09:01:00+05:30", "recorded_at": "2026-11-04T09:01:00+05:30"}
+    ],
+    "completed_on_time": [
+      {"unit_id": "CASE-CARD-001-U3", "case_id": "CASE-CARD-001", "outcome": "completed",
+       "occurred_at": "2026-11-04T09:04:00+05:30", "recorded_at": "2026-11-04T09:05:00+05:30"}
+    ],
+    "late_completed": [
+      {"unit_id": "CASE-CARD-001-U3", "case_id": "CASE-CARD-001", "outcome": "completed",
+       "occurred_at": "2026-11-04T09:04:00+05:30", "recorded_at": "2026-11-04T09:40:00+05:30"}
+    ]
+  }
+}

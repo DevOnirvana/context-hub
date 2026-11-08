@@ -22,6 +22,7 @@ from hub.interface import ContextHub, Session
 from hub.models import Candidate, UnitRef
 from hub.timeres import RelativeTime, resolve
 from scripts.reset_db import reset
+from systems import dialler, documents
 
 CUSTOMER = "CUST-001"
 CARD_CASE = "CASE-CARD-001"
@@ -33,7 +34,7 @@ START = datetime(2026, 11, 2, 18, 0, tzinfo=IST)  # before the first step
 class TimelineStep:
     at: datetime
     name: str
-    run: Callable[[ContextHub], None]
+    run: Callable[[ContextHub], None] | None  # None: only the clock moves (sweeps, system records)
 
 
 def payments_session(hub: ContextHub) -> Session:
@@ -75,11 +76,6 @@ def mon_1830(hub: ContextHub) -> None:
     _callback(hub, s, case.case_id, RelativeTime(day_offset=1, time="21:00"))  # "tomorrow at 9 PM"
 
 
-def tue_1600(hub: ContextHub) -> None:
-    hub.record_event(system_session(hub, "documents"), case_id=CARD_CASE, event_type="statement_upload_recorded",
-                     payload={"document": "bank_statement"})
-
-
 def tue_1940(hub: ContextHub) -> None:
     s = payments_session(hub)
     case = hub.open_case(s, case_type="upi_failed_debit")  # PAY-2042, UPI-7781
@@ -105,21 +101,41 @@ def tue_2015(hub: ContextHub) -> None:
                                     fields={"key": "preferred_explanation_style", "value": "simple English"}))
 
 
-def wed_0915(hub: ContextHub) -> None:
-    """Nothing to do: moving the clock here runs the sweep (callback Missed with a 15-minute threshold)."""
-
-
+# The shared timeline ends at Wed 10:00, just before the credit conversation (SPEC 17.28): that
+# conversation is the live agent moment. System records (the Tue 16:00 upload, dialler outcomes)
+# are not scripted here; the mocks emit them and advance_to() delivers them.
 TIMELINE: list[TimelineStep] = [
     TimelineStep(datetime(2026, 11, 2, 18, 30, tzinfo=IST), "Mon 18:30 payments: dispute, promise, callback 9 PM", mon_1830),
-    TimelineStep(datetime(2026, 11, 3, 16, 0, tzinfo=IST), "Tue 16:00 system: statement upload recorded", tue_1600),
+    TimelineStep(datetime(2026, 11, 3, 16, 0, tzinfo=IST), "Tue 16:00 system: statement upload recorded", None),
     TimelineStep(datetime(2026, 11, 3, 19, 40, tzinfo=IST), "Tue 19:40 payments: UPI failed debit", tue_1940),
     TimelineStep(datetime(2026, 11, 3, 20, 15, tzinfo=IST), "Tue 20:15 payments: reschedule to 9 AM, simple English", tue_2015),
-    TimelineStep(datetime(2026, 11, 4, 9, 15, tzinfo=IST), "Wed 09:15 clock sweep", wed_0915),
+    TimelineStep(datetime(2026, 11, 4, 9, 15, tzinfo=IST), "Wed 09:15 clock sweep", None),
+    TimelineStep(datetime(2026, 11, 4, 10, 0, tzinfo=IST), "Wed 10:00 credit agent conversation begins", None),
 ]
 
 
+def advance_to(hub: ContextHub, t: datetime, *, dialler_profile: dialler.Profile = "none",
+               customer_id: str = CUSTOMER) -> None:
+    """Move the clock to t, delivering every system record logged in (now, t] in time order.
+
+    For each record: set the clock to its recorded_at (the sweep runs for that moment), then
+    record_event through a system session. Delivering in order matters: a call logged at 09:05
+    must reach the hub before a 09:16 sweep, or the hub would report a miss the bank never had.
+    """
+    start = hub.clock.now()
+    pending = [(u.recorded_at, "documents", u.case_id, "statement_upload_recorded", {"document": u.document},
+                u.recorded_at) for u in documents.uploads_between(customer_id, start, t)]
+    pending += [(r.recorded_at, "dialler", r.case_id, "dialler_outcome", {"unit_id": r.unit_id, "outcome": r.outcome},
+                 r.occurred_at) for r in dialler.records_between(customer_id, start, t, dialler_profile)]
+    for recorded_at, source, case_id, event_type, payload, occurred_at in sorted(pending, key=lambda p: p[0]):
+        hub.clock.set(recorded_at)
+        hub.record_event(system_session(hub, source), case_id=case_id, event_type=event_type, payload=payload,
+                         occurred_at=occurred_at)
+    hub.clock.set(t)
+
+
 def replay_to(t: datetime, threshold: timedelta, *, admin_url: str | None = None,
-              app_url: str | None = None) -> SimClock:
+              app_url: str | None = None, dialler_profile: dialler.Profile = "none") -> SimClock:
     """Reset the demo data and run the timeline up to and including time t.
 
     Returns a fresh clock at t with no listeners: the caller (UI, walkthrough) owns its own
@@ -133,7 +149,8 @@ def replay_to(t: datetime, threshold: timedelta, *, admin_url: str | None = None
         for step in TIMELINE:
             if step.at > t:
                 break
-            clock.set(step.at)  # sweep runs first, as it would in real time
-            step.run(hub)
-        clock.set(max(t, clock.now()))  # final sweep at t
+            advance_to(hub, step.at, dialler_profile=dialler_profile)  # system records and sweeps first
+            if step.run is not None:
+                step.run(hub)
+        advance_to(hub, max(t, clock.now()), dialler_profile=dialler_profile)
     return SimClock(clock.now())

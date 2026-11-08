@@ -1,0 +1,9 @@
+{
+  "DSP-1001": {
+    "customer_id": "CUST-001",
+    "timeline": [
+      {"status": "investigation_initiated", "effective_at": "2026-11-02T18:30:00+05:30"},
+      {"status": "provisional_credit_issued", "effective_at": "2026-11-04T08:00:00+05:30"}
+    ]
+  }
+}
