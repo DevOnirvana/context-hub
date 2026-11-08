@@ -148,7 +148,7 @@ The customer-context preference is injected into the reply instructions (Wednesd
 Prompts live in `agents/prompts/*.md` as plain files. (Production option to name on slides: LangSmith Context Hub for versioned agent instructions. It manages what the agent IS; our hub manages what the bank knows about the CUSTOMER.)
 
 ## 11. Systems of record (mocks in `systems/`, JSON fixtures, clock-aware)
-- dispute: DSP-1001 status timeline: Mon 2 Nov 18:35 "investigation_initiated"; Wed 4 Nov 08:00 "provisional_credit_issued".
+- dispute: DSP-1001 status timeline: "investigation_initiated" effective from case creation (Mon 2 Nov 18:30); Wed 4 Nov 08:00 "provisional_credit_issued".
 - statement: card ending 4417, statement due date, total due, minimum due, disputed amount flagged.
 - documents: statement upload record (Tue 3 Nov 16:00).
 - dialler: outcomes per commitment: completed | attempted_no_answer | none. Default for the main demo: none (so Wednesday 9 AM is Missed).
@@ -188,3 +188,24 @@ Per-customer encryption keys in a KMS (erasure by key destruction), consent regi
 
 ## 16. Assumptions
 A1 value is cost per lost-context case, not frequency. A2 card disputes rank above UPI on published process duration. A3 purpose-bound sharing inside one bank has a lawful basis under DPDP. A4 one resolved customer ID. A5 dialler emits completed / attempted_no_answer / none. A6 dispute and statement systems expose status APIs. A7 synthetic data.
+
+## 17. Decisions log (8 Nov)
+Answers to the ambiguities raised before Step 1. Where this section differs from an earlier section, this section wins.
+
+1. Customers: table `customer_context.customers` (customer_id PK, display_name). IDs are used everywhere else; the name is for the UI only.
+2. Claim status and version reasons: rows are immutable except `valid_to`, so "Superseded" and "Corrected" are never stored as statuses. `case_memory.units` and `customer_context.items` get a column `change_reason`, CHECK in ('created', 'reschedule', 'correction', 'status_change'). A closed version is displayed as superseded or corrected according to its successor's `change_reason`. Stored statuses: claims 'active'; commitments 'active', 'attempted', 'fulfilled', 'missed', 'cancelled'. Every change also appends an event (claim_corrected, commitment_rescheduled, and so on).
+3. Policy rules: NULL in a `policy.rules` column means wildcard. The most specific matching rule (most non-null columns) wins; on a tie, the more restrictive decision wins (deny, then existence_only, then allow). Restricted-deny is a row; customer_context allow and default deny live in code (`hub/policy.py`).
+4. Seed data: only the customer and the policy rules. Cases are created by scenario steps as the timeline runs (CASE-CARD-001 on Mon 18:30, PAY-2042 on Tue 19:40). `get_context()` ignores anything whose `opened_at` or `valid_from` is later than the clock. For Steps 4 and 7: one shared function runs the scripted timeline up to a given time; the walkthrough and the UI jump buttons both use it.
+5. Archive: `hub_app` has no access to the archive schema; `hub_archiver` has INSERT only on `archive.conversations`.
+6. Missed rule: a commitment is Missed when clock >= due_at + MISSED_THRESHOLD_MINUTES with no dialler record.
+7. Callback acceptance: servicing hours are inclusive (08:00 to 21:00 IST). The 7-day limit is inclusive (due_at <= now + 7 days).
+8. Lifecycle additions:
+   - Attempted -> Superseded (customer reschedules after a no-answer): allowed.
+   - Attempted -> Cancelled: allowed.
+   - Attempted -> Missed: not allowed. Attempted means the bank called; it is not a miss.
+   - Any later 'completed' dialler record moves Attempted or Missed to Fulfilled, with a `status_corrected` event whose payload has `on_time` true or false (completed_at within due_at + threshold or not).
+   - A new callback after a Missed one is a new commitment unit, with `payload.follows_unit_id` pointing to the missed one.
+9. Customer promises: written via `accept_commitment(owner='customer')` through an agent tool `record_customer_commitment`. `propose_memory()` handles claims and customer-context preferences only.
+10. Dispute mock: investigation_initiated is effective from case creation (Mon 18:30); section 11 updated. ID formats stay as written (different business lines use different formats).
+11. Event erasure: out of scope; parked in LATER.md as erasure by per-customer key destruction.
+12. Timestamps: no `DEFAULT now()` anywhere. Every timestamp comes from the simulated clock. Example: a late dialler record has occurred_at 09:04 and recorded_at 09:40.
