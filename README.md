@@ -67,7 +67,6 @@ Hub 12/12, latest-value-wins (LangGraph store put semantics) 7/12. Both were fed
 ## Limitations
 
 - Synthetic data, one customer, two business lines; no case closure.
-- A changed explanation-style preference is stored correctly, but the reply instructions still assume simple English ([results/free_chat_r2.md](results/free_chat_r2.md), prompt l).
 - Fail-closed sensitive-data check: a merchant named "Apollo Hospital Pharmacy" is rejected as health data.
 - Summary-based memory (T1) was not built; its results are predictions only.
 - The replay cache holds synthetic conversation text for demo determinism; a production system would keep no such cache.

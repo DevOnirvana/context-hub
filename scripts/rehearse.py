@@ -1,6 +1,9 @@
 """Free-chat rehearsal: off-script prompts from the Wed 10:00 state (after the missed 9 AM callback).
 
-Usage: python -m scripts.rehearse r1|r2 [--dry-run]
+Usage: python -m scripts.rehearse r1|r2 [--dry-run | --check]
+
+--check replays the round in replay mode (no network, no spend), writes nothing, prints hit or
+MISS per turn and exits non-zero on any miss: proof that every recorded turn still matches.
 
 r1: nine single prompts (Step 10), written to results/free_chat.md.
 r2: one six-turn conversation (M1) and ten single prompts (Step 11), written to results/free_chat_r2.md.
@@ -176,7 +179,7 @@ def main() -> None:
     load_dotenv()
     round_name = next((a for a in sys.argv[1:] if a in ROUNDS), None)
     if round_name is None:
-        sys.exit(f"usage: python -m scripts.rehearse {'|'.join(ROUNDS)} [--dry-run]")
+        sys.exit(f"usage: python -m scripts.rehearse {'|'.join(ROUNDS)} [--dry-run | --check]")
     out, cap, title, items = ROUNDS[round_name]
     if "--dry-run" in sys.argv:
         for item in items:
@@ -188,6 +191,20 @@ def main() -> None:
         if conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB,)).fetchone() is None:
             conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DB)))
     admin_url, app_url = make_conninfo(admin_root, dbname=DB), make_conninfo(app_root, dbname=DB)
+
+    if "--check" in sys.argv:
+        llm, misses = LLM(load_config(mode="replay")), 0
+        for item in items:
+            item_lines, _cost = run_item(item, llm, admin_url, app_url)
+            # run_item records one "**Refused before any model call:**" line per failed turn.
+            failed = [line for line in item_lines if line.startswith("**Refused before any model call:**")]
+            item_misses = sum("ReplayCacheMiss" in line for line in failed)
+            misses += item_misses
+            refused = len(failed) - item_misses  # e.g. the unauthenticated item: refused by the hub, no model call
+            print(f"{item.key}: {len(item.turns) - len(failed)} hit, {item_misses} MISS"
+                  + (f", {refused} refused by the hub before any model call" if refused else ""))
+        print(f"{round_name}: {'all recorded turns hit the cache' if not misses else f'{misses} MISS'}")
+        sys.exit(1 if misses else 0)
 
     config = load_config(mode="auto")
     # The round's own cap sits under the global budget guard: whichever is lower stops paid calls.

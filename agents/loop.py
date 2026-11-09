@@ -51,10 +51,15 @@ def reply_instructions(packet: ContextPacket, turn_index: int = 0) -> str | None
                      "You already acknowledged the missed callback earlier in this conversation; "
                      "do not apologise for it again.")
     for pref in packet.customer_context:
-        if pref.key == "preferred_explanation_style":
+        if pref.key == "preferred_explanation_style" and pref.value.strip().lower() == "simple english":
+            # Unchanged wording on purpose: every recorded turn used it, so replay keeps hitting.
             lines.append(f"This customer asked for explanations in this style: {pref.value}. Use short sentences "
                          "and everyday words. Avoid banking terms (for example 'provisional credit', 'statement "
                          "balance', 'minimum amount due', 'chargeback'); say what they mean in plain words.")
+        elif pref.key == "preferred_explanation_style":
+            # Any other stated style is passed on neutrally: the instruction follows the stored value,
+            # never the simple-English default (rehearsal round 2, l).
+            lines.append(f"This customer stated a preference for how things are explained: {pref.value}. Follow it.")
         elif pref.key == "preferred_language":
             lines.append(f"This customer prefers this language: {pref.value}.")
         elif pref.key == "preferred_contact_channel":

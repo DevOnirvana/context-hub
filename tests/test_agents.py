@@ -406,3 +406,31 @@ def test_no_apology_line_without_a_missed_callback(tmp_path, test_database):
         credit_conversation(ContextHub(conn, clock, threshold=THRESHOLD), fake_llm(tmp_path, client)).turn("Hi")
     extra = " ".join(b["text"] for b in client.requests[0]["system"][1:])
     assert "missed callback" not in extra and "Acknowledge" not in extra
+
+
+# --- Step 12: the instruction follows the stored preference value -----------------------------------------
+
+SIMPLE_ENGLISH_LINE = ("This customer asked for explanations in this style: simple English. Use short sentences and "
+                       "everyday words. Avoid banking terms (for example 'provisional credit', 'statement balance', "
+                       "'minimum amount due', 'chargeback'); say what they mean in plain words.")
+
+
+def test_simple_english_instruction_is_byte_identical(wed):
+    packet = wed.get_context(wed.open_session(agent_id="credit_agent", agent_role="credit_agent",
+                                              purpose="card_dispute_servicing", customer_id="CUST-001",
+                                              authenticated=True))
+    assert SIMPLE_ENGLISH_LINE in reply_instructions(packet).split("\n")
+
+
+def test_a_replaced_preference_changes_the_next_conversation(tmp_path, wed):
+    from hub.models import Candidate
+    s = wed.open_session(agent_id="credit_agent", agent_role="credit_agent", purpose="card_dispute_servicing",
+                         customer_id="CUST-001", authenticated=True)
+    wed.propose_memory(s, Candidate(type="customer_context", source="customer",
+                                    fields={"key": "preferred_explanation_style",
+                                            "value": "banking terms, not simple English"}))
+    client = ScriptedClient(reply(text("Sure.")))
+    credit_conversation(wed, fake_llm(tmp_path, client)).turn("What do I owe?")
+    extra = client.requests[0]["system"][1]["text"]
+    assert "stated a preference for how things are explained: banking terms, not simple English. Follow it." in extra
+    assert "avoid banking terms" not in extra.lower()
