@@ -21,6 +21,7 @@ def app(test_database, monkeypatch):
         monkeypatch.setenv(key, url)
     monkeypatch.setenv("MISSED_THRESHOLD_MINUTES", "15")
     at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=60)
+    at.session_state["llm_mode"] = "replay"  # tests never spend: a miss must fail, not call the API
     at.run()
     assert not at.exception
     yield at
@@ -101,5 +102,27 @@ def test_threshold_30_means_no_miss_at_0916(app):
     assert table(at, "due_at", "Wed 04 Nov 09:00") and table(at, "status", "active")
 
 
-def test_record_mode_is_not_offered(app):
-    assert app.radio(key="llm_mode").options == ["replay", "live"]
+def test_default_is_auto_and_record_is_not_offered(test_database, monkeypatch):
+    """A fresh UI defaults to auto. No turn is sent here, so nothing can be spent."""
+    for key, url in (("DATABASE_URL_ADMIN", ADMIN_URL), ("DATABASE_URL_APP", APP_URL),
+                     ("DATABASE_URL_ARCHIVER", ARCHIVER_URL), ("DATABASE_URL_UI", UI_URL)):
+        monkeypatch.setenv(key, url)
+    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=60)
+    at.run()
+    assert at.radio(key="llm_mode").options == ["auto", "replay", "live"]
+    assert at.radio(key="llm_mode").value == "auto"
+    for name in ("app_conn", "ui_conn", "archiver_conn"):
+        at.session_state[name].close()
+
+
+def test_free_text_error_is_inline_with_retry(app):
+    """Replay mode, unrecorded words, any agent and time: an inline error and a Retry button, no crash."""
+    at = click(app, "jump_Tue 19:40")
+    at.selectbox(key="role").set_value("payments_agent").run()
+    at.chat_input(key="chat_box").set_value("Has my UPI money come back?").run()
+    assert not at.exception
+    assert at.session_state["chat"][-1][0] == "error" and "ReplayCacheMiss" in at.session_state["chat"][-1][1]
+    assert at.button(key="retry_button")
+    click(at, "retry_button")                                 # still a miss in replay: shown again, still no crash
+    assert at.session_state["chat"][-1][0] == "error"
+    assert at.session_state["conversation"].messages == []  # rolled back: nothing half-sent remains

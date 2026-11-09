@@ -19,6 +19,9 @@ from psycopg.conninfo import make_conninfo
 from hub.clock import SimClock
 from scripts.reset_db import reset
 
+# Tests never spend: replay unless the shell asks otherwise (LLM_MODE=record pytest ...). Set
+# before load_dotenv(), which does not override, so a .env that says auto cannot reach the API.
+os.environ.setdefault("LLM_MODE", "replay")
 load_dotenv()
 
 IST = ZoneInfo("Asia/Kolkata")

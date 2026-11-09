@@ -12,6 +12,7 @@ The history is append-only and keeps every content block exactly as the model re
 Sonnet 5.5 checks that earlier turns were not edited, and identical requests are what make
 replay hit the cache.
 """
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,9 +88,23 @@ class Conversation:
     def role(self) -> str:
         return self.session.agent_role
 
-    def turn(self, customer_text: str) -> TurnResult:
+    def turn(self, customer_text: str, on_event: Callable[[str, object], None] | None = None) -> TurnResult:
+        """One customer turn. on_event(kind, detail) reports progress for the UI: ("thinking", step)
+        before each model call, ("tool", (name, ok)) after each tool, ("handover", reason).
+
+        If the turn fails (network, budget, a cache miss), the messages it added are removed, so
+        a retry sends exactly a prefix the API has already seen: history stays append-only from
+        the API's point of view. Hub writes made by tools before the failure stay: they happened."""
         if self.closed:
             raise RuntimeError("this conversation was handed to a human; start a new one")
+        start = len(self.messages)
+        try:
+            return self._turn(customer_text, on_event or (lambda kind, detail: None))
+        except Exception:
+            del self.messages[start:]
+            raise
+
+    def _turn(self, customer_text: str, on_event: Callable[[str, object], None]) -> TurnResult:
         packet = self.hub.get_context(self.session)
         ctx = ToolContext(hub=self.hub, llm=self.llm, session=self.session, packet=packet,
                           customer_turn=customer_text)
@@ -98,11 +113,13 @@ class Conversation:
         calls: list[ToolCall] = []
 
         for step in range(1, STEP_CAP + 1):
+            on_event("thinking", step)
             try:
                 result = self.llm.call(purpose=f"agent:{self.role}", model=self.llm.config.model_id, system=system,
                                        system_extra=extra, messages=self.messages, tools=tools,
                                        max_tokens=MAX_TOKENS, effort=EFFORT, cache_messages=True)
             except LLMRefused:
+                on_event("handover", "model_refusal")
                 return self._hand_over(ctx, packet, calls, step, "model_refusal")
             message = result.message
             self.messages.append({"role": "assistant", "content": content_to_params(message)})
@@ -116,10 +133,12 @@ class Conversation:
             for use in uses:
                 text, is_error = run_tool(ctx, use.name, dict(use.input))
                 calls.append(ToolCall(name=use.name, args=dict(use.input), result=text, is_error=is_error))
+                on_event("tool", (use.name, not is_error))
                 results.append({"type": "tool_result", "tool_use_id": use.id, "content": text,
                                 **({"is_error": True} if is_error else {})})
             self.messages.append({"role": "user", "content": results})
 
+        on_event("handover", "step_cap")
         return self._hand_over(ctx, packet, calls, STEP_CAP, "step_cap")
 
     def _hand_over(self, ctx: ToolContext, packet: ContextPacket, calls: list[ToolCall], steps: int,

@@ -34,7 +34,10 @@ Live change if asked (Level 3): set **MISSED_THRESHOLD_MINUTES** to 30, click **
 ## Rules that keep replay working
 
 - Send the scripted turns only after the **Wed 10:00** jump, in order. Only the next one is enabled.
-- Do not type free text in replay mode: there is no recorded answer, so the app shows a clear `ReplayCacheMiss` error instead of a reply. Typing needs `LLM_MODE` live and costs money.
+- Free text works at any clock time with either agent in `auto` (the default): a recorded answer plays back, anything new calls the API once (a few cents) and is saved. The sidebar shows the spend. In `replay` mode free text shows an inline error with a Retry button instead.
+- If free text breaks the scripted order, the later scripted turns are no longer exact replays: they simply run in auto and cost a few cents.
+- The nine prompts in `results/free_chat.md` are already recorded, so typing them exactly, from the Wed 10:00 jump in a fresh conversation, replays for free.
+- Network, budget, refusal and step-cap problems show inline with a Retry button; the page never crashes.
 - Preview packet makes no model call and never affects replay.
 
 ## Evidence (committed)

@@ -3,6 +3,8 @@
     replay  (default) no network; every response comes from .llm_cache/. A miss fails loudly.
     record  calls the API, saves the response under its cache key, logs usage and cost.
     live    calls the API, logs usage and cost, saves nothing.
+    auto    a hit plays back like replay; a miss calls the API like record and saves a NEW entry,
+            never overwriting an existing one (free chat in the demo UI, Step 10).
 
 Why a replay cache: the demo must run identically every time, offline, at zero cost. The model's
 output is not deterministic (and sampling parameters are not accepted, SPEC 17.33), so the only
@@ -30,7 +32,7 @@ from dotenv import dotenv_values
 from pydantic import BaseModel, TypeAdapter
 
 ROOT = Path(__file__).resolve().parent.parent
-Mode = Literal["replay", "record", "live"]
+Mode = Literal["replay", "record", "live", "auto"]
 API_BASE_URL = "https://api.anthropic.com"
 
 
@@ -120,8 +122,8 @@ def load_config(env_file: Path = ROOT / ".env", *, mode: Mode | None = None, cac
     LLM_MODE may be overridden from the shell (it is not a secret), e.g. LLM_MODE=record pytest ..."""
     values = dotenv_values(env_file) if env_file.exists() else {}
     chosen = mode or os.environ.get("LLM_MODE") or values.get("LLM_MODE") or "replay"
-    if chosen not in ("replay", "record", "live"):
-        raise LLMConfigError(f"LLM_MODE must be replay, record or live, not {chosen!r}")
+    if chosen not in ("replay", "record", "live", "auto"):
+        raise LLMConfigError(f"LLM_MODE must be replay, record, live or auto, not {chosen!r}")
     config = LLMConfig(
         mode=chosen,
         model_id=values.get("MODEL_ID") or "claude-sonnet-5-5",
@@ -135,7 +137,8 @@ def load_config(env_file: Path = ROOT / ".env", *, mode: Mode | None = None, cac
         langsmith_tracing=(values.get("LANGSMITH_TRACING") or "false").lower() == "true",
         langsmith_api_key=values.get("LANGSMITH_API_KEY") or "",
     )
-    if config.mode != "replay" and not config.api_key:
+    # auto needs the key only on a cache miss, so it is checked there, not here.
+    if config.mode in ("record", "live") and not config.api_key:
         raise LLMConfigError(f"LLM_MODE={config.mode} needs ANTHROPIC_API_KEY in {env_file} "
                              "(the shell environment is ignored on purpose). Or use LLM_MODE=replay.")
     if config.langsmith_tracing and not config.langsmith_api_key:
@@ -211,6 +214,7 @@ class LLM:
         self.config = config
         self._client_factory = client_factory
         self._client = None  # built on first paid call only; replay never builds one
+        self.spent_this_session = 0.0  # paid calls made by this instance (the UI shows it)
 
     # -- request construction --
 
@@ -257,16 +261,19 @@ class LLM:
         key = cache_key(request)
         path = self.config.cache_dir / f"{key}.json"
 
-        if self.config.mode == "replay":
-            if not path.exists():
-                last_user = next((m["content"] for m in reversed(request["messages"]) if m["role"] == "user"), "")
-                raise ReplayCacheMiss(
-                    f"no recorded response for {purpose} call to {request['model']} (key {key[:16]}...).\n"
-                    f"  expected file: {path}\n  last user message: {str(last_user)[:160]!r}\n"
-                    "  The request differs from every recorded one (prompt, model, schema or input changed). "
-                    "Re-run with LLM_MODE=record to record it (costs money), or restore the original input.")
+        if self.config.mode in ("replay", "auto") and path.exists():
             message = Message.model_validate(json.loads(path.read_text())["response"])
             return LLMResult(message=message, parsed=self._parse(message, output_format), key=key, from_cache=True)
+        if self.config.mode == "replay":
+            last_user = next((m["content"] for m in reversed(request["messages"]) if m["role"] == "user"), "")
+            raise ReplayCacheMiss(
+                f"no recorded response for {purpose} call to {request['model']} (key {key[:16]}...).\n"
+                f"  expected file: {path}\n  last user message: {str(last_user)[:160]!r}\n"
+                "  The request differs from every recorded one (prompt, model, schema or input changed). "
+                "Re-run with LLM_MODE=record to record it (costs money), or restore the original input.")
+        if self.config.mode == "auto" and not self.config.api_key:
+            raise LLMConfigError(f"{purpose}: cache miss in auto mode needs ANTHROPIC_API_KEY in .env "
+                                 "(the shell environment is ignored on purpose). Or use the scripted turns.")
 
         self._check_budget()
         message = self._send(request)
@@ -277,13 +284,26 @@ class LLM:
         if message.stop_reason == "max_tokens":
             raise LLMError(f"{purpose}: response hit max_tokens={request['max_tokens']}; raise it")
         parsed = self._parse(message, output_format)  # validate BEFORE caching: never record junk
+        entry = json.dumps({"request": request, "response": message.model_dump(mode="json")},
+                           indent=2, sort_keys=True, ensure_ascii=False) + "\n"
         if self.config.mode == "record":
             self.config.cache_dir.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"request": request, "response": message.model_dump(mode="json")},
-                                       indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+            path.write_text(entry)
+        elif self.config.mode == "auto":
+            self._save_new(path, entry)
         return LLMResult(message=message, parsed=parsed, key=key, from_cache=False)
 
     # -- internals --
+
+    def _save_new(self, path: Path, entry: str) -> None:
+        """Auto mode writes only NEW entries: exclusive create, so a recorded demo answer can never
+        be replaced by a later call (two tabs racing on the same miss keep the first answer)."""
+        self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("x") as f:
+                f.write(entry)
+        except FileExistsError:
+            pass
 
     def _send(self, request: dict) -> Message:
         if self._client is None:
@@ -329,6 +349,7 @@ class LLM:
     def _log_usage(self, purpose: str, model: str, key: str, message: Message) -> None:
         usage = message.usage.model_dump()
         cost = cost_usd(model, usage)
+        self.spent_this_session += cost
         cumulative = self.spent_usd() + cost
         row = {
             # Wall-clock time is right here: this is spend accounting, not domain time.

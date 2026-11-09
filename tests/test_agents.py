@@ -266,3 +266,49 @@ def test_no_turn_hit_the_step_cap_or_a_refusal(wed_run):
     """Code hand-overs are for failures; the scripted demo must not need one."""
     turns = [step["turn"] for step in wed_run]
     assert all(t.steps <= STEP_CAP for t in turns) and not any(t.reply == HANDOVER for t in turns)
+
+
+# --- Step 10: live progress and rollback --------------------------------------------------------------
+
+def test_progress_events_in_order(tmp_path, wed):
+    client = ScriptedClient(reply(use("get_statement", case_id=CARD_CASE), use("get_upi_status", case_id=CARD_CASE),
+                                  stop="tool_use"), reply(text("ok")))
+    events = []
+    credit_conversation(wed, fake_llm(tmp_path, client)).turn("What do I owe?", lambda k, d: events.append((k, d)))
+    assert events == [("thinking", 1), ("tool", ("get_statement", True)), ("tool", ("get_upi_status", False)),
+                      ("thinking", 2)]
+
+
+def test_a_failed_turn_rolls_back_its_messages(tmp_path, wed):
+    class Down(ScriptedClient):
+        def create(self, **request):
+            if len(self.requests) == 1:  # the second model call of the turn fails
+                self.requests.append(request)
+                raise ConnectionError("network down")
+            return super().create(**request)
+
+    client = Down(reply(use("get_statement", case_id=CARD_CASE), stop="tool_use"))
+    convo = credit_conversation(wed, fake_llm(tmp_path, client))
+    with pytest.raises(ConnectionError):
+        convo.turn("What do I owe?")
+    assert convo.messages == [] and not convo.closed     # a retry sends a clean prefix
+
+
+@pytest.mark.parametrize("key,role,prompt", __import__("scripts.rehearse", fromlist=["PROMPTS"]).PROMPTS)
+def test_rehearsal_prompts_replay_for_free(test_database, key, role, prompt):
+    """The nine free-chat prompts were recorded once (scripts/rehearse.py); from the Wed 10:00 state
+    in a fresh conversation they replay with no network, exactly as typed in the UI."""
+    clock = replay_to(WED_1000, THRESHOLD, admin_url=ADMIN_URL, app_url=APP_URL)
+
+    def no_network(_):
+        raise AssertionError("must replay")
+    with psycopg.connect(APP_URL, autocommit=True) as conn:
+        hub = ContextHub(conn, clock, threshold=THRESHOLD)
+        session = hub.open_session(agent_id=role, agent_role=role, purpose=
+                                   {"credit_agent": "card_dispute_servicing", "payments_agent": "payments_servicing"}[role],
+                                   customer_id="CUST-001", authenticated=True)
+        turn = Conversation(hub=hub, llm=LLM(load_config(mode="replay"), client_factory=no_network),
+                            session=session).turn(prompt)
+    assert turn.reply
+    if role == "credit_agent":
+        assert not [s for s in FORBIDDEN if s in turn.reply + " ".join(c.result for c in turn.tool_calls)]

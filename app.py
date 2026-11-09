@@ -9,6 +9,7 @@ The UI never changes memory itself: every change goes through hub/interface.py, 
 loop or the shared timeline (replay_to), exactly as in the tests.
 """
 import os
+import time
 from datetime import datetime, timedelta
 
 import psycopg
@@ -32,8 +33,9 @@ JUMPS = [("Mon 18:30", datetime(2026, 11, 2, 18, 30, tzinfo=IST)), ("Tue 16:00",
          ("Tue 19:40", datetime(2026, 11, 3, 19, 40, tzinfo=IST)), ("Tue 20:15", datetime(2026, 11, 3, 20, 15, tzinfo=IST)),
          ("Wed 09:16", datetime(2026, 11, 4, 9, 16, tzinfo=IST)), ("Wed 10:00", datetime(2026, 11, 4, 10, 0, tzinfo=IST))]
 PURPOSES = {"credit_agent": "card_dispute_servicing", "payments_agent": "payments_servicing"}
-# Record mode is CLI-only on purpose: the UI must not be able to overwrite the demo's replay cache.
-LLM_MODES = ["replay", "live"]
+# auto (default): recorded answers play back, anything new calls the API once and is saved as a NEW
+# entry. Record mode is CLI-only on purpose: the UI must never overwrite the demo's replay cache.
+LLM_MODES = ["auto", "replay", "live"]
 ss = st.session_state
 # Key columns get room, so "existence_only" and "superseded" are never cut off.
 COLUMNS = {"decision": st.column_config.TextColumn(width="medium"),
@@ -83,29 +85,83 @@ def session():
                                authenticated=ss.authenticated)
 
 
-def send(text: str, at: datetime | None = None, label: str = "typed turn", scripted: int | None = None) -> None:
+def queue(text: str, at: datetime | None = None, label: str = "typed turn", scripted: int | None = None) -> None:
+    """Buttons and the chat box only queue a turn; the page body runs it inside a live status box."""
+    ss.pending, ss.retry = {"text": text, "at": at, "label": label, "scripted": scripted}, None
+
+
+def queue_typed() -> None:
+    if ss.chat_box:
+        queue(ss.chat_box)
+
+
+def retry() -> None:
+    """Re-run the failed turn. After a hand-over the agent is closed, so it starts a new conversation."""
+    pending, ss.retry = ss.retry, None
+    if pending.pop("new_conversation", False) or (ss.conversation is not None and ss.conversation.closed):
+        end_conversation()
+    ss.pending = pending
+
+
+def get_llm() -> LLM:
+    """One LLM per browser session and mode, so the session's spend adds up across conversations."""
+    if ss.llm is None or ss.llm.config.mode != ss.llm_mode:
+        ss.llm = LLM(load_config(mode=ss.llm_mode))
+    return ss.llm
+
+
+def run_pending() -> None:
+    """Run the queued turn, listing each step live (st.status). Errors are shown, never raised."""
+    pending, ss.pending = ss.pending, None
     hub = ss.hub
-    if scripted is not None:
-        ss.next_turn = scripted + 1  # replay hits only for the recorded order
-    if at is not None and hub.clock.now() < at:
-        advance_to(hub, at)
+    if pending["scripted"] is not None:
+        ss.next_turn = pending["scripted"] + 1  # replay hits only in the recorded order
+    if pending["at"] is not None and hub.clock.now() < pending["at"]:
+        advance_to(hub, pending["at"])
     before = queries.max_log_id(ss.ui_conn)
-    try:
-        if ss.conversation is None:
-            ss.conversation = Conversation(hub=hub, llm=LLM(load_config(mode=ss.llm_mode)), session=session())
-            ss.conv_started = hub.clock.now()
-        result = ss.conversation.turn(text)
-    except (LLMError, HubError, RuntimeError) as exc:
-        # Shown, not raised. The conversation is dropped: its history may now end mid-turn.
-        ss.chat.append(("customer", text))
-        ss.chat.append(("error", f"{type(exc).__name__}: {exc}"))
-        ss.conversation = None
-        ss.view = {"source": f"{label} (failed)", "packet": None, "calls": [], "instructions": None,
+    started = time.monotonic()  # UI timing only, not domain time: domain time is the simulated clock
+
+    def elapsed() -> str:
+        return f"{time.monotonic() - started:.1f}s"
+
+    with st.status(f"{ss.role} is working", expanded=True) as status:
+        def on_event(kind: str, detail) -> None:
+            if kind == "thinking":
+                status.update(label=f"{ss.role}: model call {detail} ({elapsed()})")
+            elif kind == "tool":
+                name, ok = detail
+                st.write(f"{name}: {'ok' if ok else 'refused'} ({elapsed()})")
+            else:
+                st.write(f"handed to a human: {detail} ({elapsed()})")
+
+        spent_before = ss.llm.spent_this_session if ss.llm is not None else 0.0
+        try:
+            llm = get_llm()
+            spent_before = llm.spent_this_session
+            if ss.conversation is None:
+                ss.conversation = Conversation(hub=hub, llm=llm, session=session())
+                ss.conv_started = hub.clock.now()
+            result = ss.conversation.turn(pending["text"], on_event)
+        except (LLMError, HubError, RuntimeError) as exc:
+            # The loop rolled its messages back, so Retry resends a clean turn.
+            ss.chat += [("customer", pending["text"]), ("error", f"{type(exc).__name__}: {exc}")]
+            ss.retry = dict(pending)
+            ss.view = {"source": f"{pending['label']} (failed)", "packet": None, "calls": [], "instructions": None,
+                       "access": queries.access_log(ss.ui_conn, after=before)}
+            status.update(label=f"Failed after {elapsed()}", state="error")
+            return
+        finally:
+            if ss.llm is not None:
+                ss.session_spend += ss.llm.spent_this_session - spent_before
+        ss.chat += [("customer", pending["text"]), ("agent", result.reply)]
+        if ss.conversation.closed:  # a refusal or the step cap: code handed over to a human
+            ss.chat.append(("notice", "The agent handed this conversation to a human. Retry starts a new one."))
+            ss.retry = {**pending, "new_conversation": True}
+        ss.view = {"source": pending["label"], "packet": result.packet, "calls": result.tool_calls,
+                   "instructions": reply_instructions(result.packet),
                    "access": queries.access_log(ss.ui_conn, after=before)}
-        return
-    ss.chat += [("customer", text), ("agent", result.reply)]
-    ss.view = {"source": label, "packet": result.packet, "calls": result.tool_calls,
-               "instructions": reply_instructions(result.packet), "access": queries.access_log(ss.ui_conn, after=before)}
+        status.update(label=f"Done in {elapsed()}: {len(result.tool_calls)} tool call(s), {result.steps} model call(s)",
+                      state="complete", expanded=False)
 
 
 def preview_packet() -> None:
@@ -134,8 +190,10 @@ def try_to_edit_history() -> None:
 
 if "hub" not in ss:
     ss.threshold = int(os.environ.get("MISSED_THRESHOLD_MINUTES", "15"))
-    ss.llm_mode, ss.role, ss.authenticated = "replay", "credit_agent", True
+    ss.setdefault("llm_mode", "auto")  # setdefault: tests and demo_run pin replay before the first run
+    ss.role, ss.authenticated = "credit_agent", True
     ss.conversation, ss.chat, ss.conv_seq, ss.view, ss.edit_result, ss.next_turn = None, [], 0, None, None, 0
+    ss.pending, ss.retry, ss.llm, ss.session_spend = None, None, None, 0.0
     connect()
     go_to(START)
 
@@ -155,8 +213,11 @@ with st.sidebar:
     st.number_input("MISSED_THRESHOLD_MINUTES (applies on the next jump)", min_value=0, max_value=240, step=5,
                     key="threshold")
     st.radio("LLM_MODE", LLM_MODES, key="llm_mode", horizontal=True, on_change=end_conversation,
-             help="replay: recorded responses, no network. live: calls the API (costs money). "
-                  "record is CLI-only.")
+             help="auto: recorded answers play back; anything new calls the API once and is saved. "
+                  "replay: recorded only, no network. live: always calls the API. record is CLI-only.")
+    usage = load_config(mode="replay")  # only for the usage log path and the budget; makes no call
+    st.caption(f"Spend this session: ${ss.session_spend:.4f}. Logged total: "
+               f"${LLM(usage).spent_usd():.4f} of ${usage.budget_usd:.2f} budget.")
     st.button("Reset demo", key="reset", on_click=go_to, args=(START,), width="stretch")
     st.button("End conversation", key="end_conversation", on_click=end_conversation, width="stretch")
     st.divider()
@@ -176,22 +237,26 @@ with left:
     c2.toggle("Customer authenticated", key="authenticated", on_change=end_conversation)
     st.button("Preview packet (no model call)", key="preview", on_click=preview_packet)
     if ss.role == "credit_agent":
-        st.caption("Scripted demo turns: the recorded words, times and order, so replay always matches. "
-                   "Only the next one is enabled; start from the Wed 10:00 jump.")
+        st.caption("Scripted demo turns: the recorded words, times and order, so they replay at no cost. "
+                   "Only the next one is enabled; start from the Wed 10:00 jump. After free text they run in auto.")
         for n, turn in enumerate(WED_TURNS):
-            st.button(f"Send: {turn.label}", key=f"turn_{n}", on_click=send,
-                      args=(turn.text, turn.at, turn.label, n),
-                      disabled=n != ss.next_turn or now > turn.at, width="stretch")
+            st.button(f"Send: {turn.label}", key=f"turn_{n}", on_click=queue,
+                      args=(turn.text, turn.at, turn.label, n), disabled=n != ss.next_turn, width="stretch")
     for speaker, text in ss.chat:
         if speaker == "error":
             st.error(text)
+        elif speaker == "notice":
+            st.warning(text)
         else:
             with st.chat_message("user" if speaker == "customer" else "assistant"):
                 st.write(text)
-    typed = st.chat_input("Type as the customer")
-    if typed:
-        send(typed)
-        st.rerun()
+    if ss.retry is not None:
+        st.button("Retry in a new conversation" if ss.retry.get("new_conversation") else "Retry", key="retry_button",
+                  on_click=retry)
+    if ss.pending is not None:
+        run_pending()
+        st.rerun()  # redraw the chat, tabs and sidebar spend with the turn's results
+    st.chat_input("Type as the customer", key="chat_box", on_submit=queue_typed)
 
 with right:
     tabs = st.tabs(["Case memory", "Events", "Customer context", "Access log", "What the agent sees"])

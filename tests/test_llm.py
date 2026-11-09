@@ -199,3 +199,52 @@ def test_langsmith_tracing_is_off_by_default_and_needs_its_key_from_dotenv(tmp_p
     env.write_text("LANGSMITH_TRACING=true\nLANGSMITH_API_KEY=\n")
     with pytest.raises(LLMConfigError, match="LANGSMITH_API_KEY"):
         load_config(env)
+
+
+# --- 7. auto mode (Step 10): hit plays back, miss calls once and saves a NEW entry --------------------
+
+def test_auto_hit_plays_back_without_a_client(tmp_path):
+    LLM(config(tmp_path, "record"), client_factory=lambda c: FakeClient(message())).call(purpose="t", output_format=Echo, **REQ)
+    result = LLM(config(tmp_path, "auto"), client_factory=no_network).call(purpose="t", output_format=Echo, **REQ)
+    assert result.from_cache and result.parsed == Echo(word="hi")
+
+
+def test_auto_miss_calls_once_saves_and_tracks_spend(tmp_path):
+    fake = FakeClient(message())
+    llm = LLM(config(tmp_path, "auto"), client_factory=lambda c: fake)
+    first = llm.call(purpose="t", output_format=Echo, **REQ)
+    second = llm.call(purpose="t", output_format=Echo, **REQ)        # now a hit
+    assert (first.from_cache, second.from_cache, len(fake.calls)) == (False, True, 1)
+    assert (tmp_path / "cache" / f"{first.key}.json").exists()
+    assert llm.spent_this_session == pytest.approx((1000 * 0.10 + 200 * 0.50) / 1e6)
+
+
+def test_auto_never_overwrites_an_existing_entry(tmp_path):
+    llm = LLM(config(tmp_path, "auto"), client_factory=no_network)
+    path = tmp_path / "cache" / "k.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("recorded demo answer")
+    llm._save_new(path, "a later answer")
+    assert path.read_text() == "recorded demo answer"
+
+
+def test_auto_miss_respects_the_budget(tmp_path):
+    (tmp_path / "usage.csv").write_text("cost_usd\n10.0\n")
+    fake = FakeClient(message())
+    with pytest.raises(BudgetExceeded):
+        LLM(config(tmp_path, "auto"), client_factory=lambda c: fake).call(purpose="t", output_format=Echo, **REQ)
+    assert fake.calls == []
+
+
+def test_auto_miss_without_a_key_is_a_clear_error(tmp_path):
+    cfg = LLMConfig(mode="auto", model_id="claude-sonnet-5-5", extraction_model_id="claude-haiku-5-5", budget_usd=10.0,
+                    cache_dir=tmp_path / "cache", usage_path=tmp_path / "usage.csv", api_key="")
+    with pytest.raises(LLMConfigError, match="auto mode needs ANTHROPIC_API_KEY"):
+        LLM(cfg, client_factory=no_network).call(purpose="t", output_format=Echo, **REQ)
+
+
+def test_auto_needs_no_key_at_load(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=\n")
+    monkeypatch.delenv("LLM_MODE", raising=False)
+    assert load_config(env, mode="auto").mode == "auto"

@@ -23,6 +23,7 @@ FORBIDDEN = ["PAY-2042", "UPI-7781", "Ramesh", "4,200"]
 def run() -> tuple[list[str], list[str]]:
     lines, failures = [], []
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+    at.session_state["llm_mode"] = "replay"  # the freeze check must never spend
     at.run()  # first load: resets the demo data to Mon 02 Nov 18:00
 
     def click(key):
