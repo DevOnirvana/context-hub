@@ -35,10 +35,21 @@ def system_prompt(role: str) -> str:
     return (PROMPTS / "base.md").read_text() + "\n" + (PROMPTS / f"{role}.md").read_text()
 
 
-def reply_instructions(packet: ContextPacket) -> str | None:
+def missed_callback(packet: ContextPacket) -> bool:
+    return any(u.action == "callback" and u.owner == "bank" and u.status == "missed"
+               for c in packet.cases for u in c.units)
+
+
+def reply_instructions(packet: ContextPacket, turn_index: int = 0) -> str | None:
     """The customer-context preference, injected into the reply instructions (SPEC 10), so the
-    Wednesday reply visibly changes. Only allowlisted keys reach the packet (admission test 1)."""
+    Wednesday reply visibly changes. Only allowlisted keys reach the packet (admission test 1).
+    Also whether to apologise for a missed callback: code decides from the turn index (the first
+    reply of a conversation apologises, later ones do not), so the model never repeats it."""
     lines = []
+    if missed_callback(packet):
+        lines.append("A bank callback was missed. Acknowledge it once, in this reply." if turn_index == 0 else
+                     "You already acknowledged the missed callback earlier in this conversation; "
+                     "do not apologise for it again.")
     for pref in packet.customer_context:
         if pref.key == "preferred_explanation_style":
             lines.append(f"This customer asked for explanations in this style: {pref.value}. Use short sentences "
@@ -74,6 +85,7 @@ class TurnResult:
     steps: int                      # model calls made
     escalated: bool
     writes: list[str]               # what changed in the hub, in order
+    instructions: str | None = None  # the reply instructions sent with this turn (uncached system block)
 
 
 @dataclass
@@ -83,6 +95,7 @@ class Conversation:
     session: Session
     messages: list[dict] = field(default_factory=list)   # append-only
     closed: bool = False                                  # handed to a human by code
+    turns_done: int = 0                                   # completed customer turns (sets the apology flag)
 
     @property
     def role(self) -> str:
@@ -109,7 +122,7 @@ class Conversation:
         ctx = ToolContext(hub=self.hub, llm=self.llm, session=self.session, packet=packet,
                           customer_turn=customer_text)
         self.messages.append({"role": "user", "content": turn_message(packet, customer_text)})
-        system, extra, tools = system_prompt(self.role), reply_instructions(packet), tools_for(self.role)
+        system, extra, tools = system_prompt(self.role), reply_instructions(packet, self.turns_done), tools_for(self.role)
         calls: list[ToolCall] = []
 
         for step in range(1, STEP_CAP + 1):
@@ -126,8 +139,9 @@ class Conversation:
             uses = [b for b in message.content if b.type == "tool_use"]
             if message.stop_reason != "tool_use" or not uses:
                 reply = "\n".join(b.text for b in message.content if b.type == "text").strip()
+                self.turns_done += 1
                 return TurnResult(reply=reply, packet=packet, tool_calls=calls, steps=step,
-                                  escalated=ctx.escalated, writes=ctx.writes)
+                                  escalated=ctx.escalated, writes=ctx.writes, instructions=extra)
             # Every tool_use gets its result, all in ONE user message (the API pairs them by id).
             results = []
             for use in uses:

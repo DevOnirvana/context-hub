@@ -294,21 +294,115 @@ def test_a_failed_turn_rolls_back_its_messages(tmp_path, wed):
     assert convo.messages == [] and not convo.closed     # a retry sends a clean prefix
 
 
-@pytest.mark.parametrize("key,role,prompt", __import__("scripts.rehearse", fromlist=["PROMPTS"]).PROMPTS)
-def test_rehearsal_prompts_replay_for_free(test_database, key, role, prompt):
-    """The nine free-chat prompts were recorded once (scripts/rehearse.py); from the Wed 10:00 state
-    in a fresh conversation they replay with no network, exactly as typed in the UI."""
-    clock = replay_to(WED_1000, THRESHOLD, admin_url=ADMIN_URL, app_url=APP_URL)
+def _rehearsal_items():
+    from scripts.rehearse import ROUNDS
+    return [item for _out, _cap, _title, items in ROUNDS.values() for item in items]
+
+
+@pytest.mark.parametrize("item", _rehearsal_items(), ids=lambda i: i.key)
+def test_rehearsal_items_replay_for_free(test_database, item):
+    """Every rehearsal item (scripts/rehearse.py, rounds 1 and 2) was recorded once; it replays with
+    no network through the same code path, and the credit agent never surfaces UPI details."""
+    from scripts.rehearse import run_item
 
     def no_network(_):
         raise AssertionError("must replay")
+    lines, cost = run_item(item, LLM(load_config(mode="replay"), client_factory=no_network), ADMIN_URL, APP_URL)
+    text = "\n".join(lines)
+    assert cost == 0 and "ReplayCacheMiss" not in text
+    if not item.authenticated:
+        assert "NotAuthenticatedError" in text and "deny" in text
+    elif item.role == "credit_agent":
+        said = "\n".join(line for line in lines if line.startswith(("> ", "- `")))  # replies and tool results
+        assert not [s for s in FORBIDDEN if s in said]
+
+
+# --- Step 11: fixes from the rehearsal ------------------------------------------------------------------
+
+def extraction(*items) -> Message:
+    base = dict(text="x", amount_inr=None, merchant=None, payee=None, preference_key=None, preference_value=None,
+                sensitive_categories=[])
+    return reply(text(json.dumps({"items": [{**base, **i} for i in items]})))
+
+
+def claim_versions(hub, unit_id):
+    return hub.conn.execute("SELECT version, change_reason, payload FROM case_memory.units WHERE unit_id = %s "
+                            "ORDER BY version", (unit_id,)).fetchall()
+
+
+def test_correction_is_a_new_version_not_a_second_claim(tmp_path, wed):
+    words = "it was 5,800 not 8,500"
+    units_before = count(wed, "SELECT count(DISTINCT unit_id) FROM case_memory.units")
+    client = ScriptedClient(
+        reply(use("propose_memory", case_id=CARD_CASE, customer_words=words, corrects_unit_id="CASE-CARD-001-U1"),
+              stop="tool_use"),
+        extraction({"type": "claim", "text": words, "amount_inr": 5800}),
+        reply(text("Noted.")))
+    turn = credit_conversation(wed, fake_llm(tmp_path, client)).turn(f"Sorry, {words}.")
+    result = json.loads(results(turn)["propose_memory"].result)
+    assert result["decisions"][0]["admitted"] and result["decisions"][0]["corrected_unit_id"] == "CASE-CARD-001-U1"
+    (v1, v2) = claim_versions(wed, "CASE-CARD-001-U1")
+    assert (v2[0], v2[1], v2[2]["amount_inr"], v2[2]["correction_text"]) == (2, "correction", 5800, words)
+    assert v2[2]["merchant"] == "UrbanCart" and v2[2]["text"] == v1[2]["text"]           # original facts kept
+    assert count(wed, "SELECT count(DISTINCT unit_id) FROM case_memory.units") == units_before  # no new claim
+    assert wed.conn.execute("SELECT payload FROM events.log WHERE event_type = 'claim_corrected'").fetchone()[0] == \
+        {"changed_fields": ["amount_inr", "correction_text"], "from_version": 1}
+
+
+@pytest.mark.parametrize("case_id,unit_id", [
+    (CARD_CASE, "CASE-CARD-001-U3"),     # a commitment, not a claim
+    ("PAY-2042", "PAY-2042-U1"),         # another case the credit agent may not see
+    (CARD_CASE, "CASE-CARD-001-U99"),    # not in the packet
+])
+def test_correction_of_anything_but_a_visible_claim_is_refused(tmp_path, wed, case_id, unit_id):
+    before = count(wed, "SELECT count(*) FROM case_memory.units")
+    client = ScriptedClient(reply(use("propose_memory", case_id=case_id, customer_words="it was 5,800",
+                                      corrects_unit_id=unit_id), stop="tool_use"), reply(text("ok")))
+    turn = credit_conversation(wed, fake_llm(tmp_path, client)).turn("it was 5,800")
+    call = results(turn)["propose_memory"]
+    assert call.is_error and "case not available" in call.result
+    assert count(wed, "SELECT count(*) FROM case_memory.units") == before
+
+
+def test_a_promise_is_written_once_and_other_claims_still_are(tmp_path, wed):
+    promise, other = "I will upload the statement by tomorrow noon", "I was charged twice"
+    client = ScriptedClient(
+        reply(use("record_customer_commitment", case_id=CARD_CASE, action="upload_statement", day_offset=1,
+                  time="12:00", customer_words=promise),
+              use("propose_memory", n=1, case_id=CARD_CASE, customer_words=promise, corrects_unit_id=None),
+              use("propose_memory", n=2, case_id=CARD_CASE, customer_words=other, corrects_unit_id=None),
+              stop="tool_use"),
+        extraction({"type": "claim", "text": other}),           # only the second propose_memory reaches extraction
+        reply(text("Noted.")))
+    turn = credit_conversation(wed, fake_llm(tmp_path, client)).turn(f"{promise}. Also {other}.")
+    outcomes = [json.loads(c.result) for c in turn.tool_calls if c.name == "propose_memory"]
+    assert outcomes[0] == {"already_recorded": "already recorded as a commitment"}
+    assert outcomes[1]["decisions"][0]["admitted"]
+    assert [w.split()[0] for w in turn.writes] == ["customer", "memory"]  # one commitment, one claim
+
+
+def test_commitment_needs_the_customers_words(tmp_path, wed):
+    client = ScriptedClient(reply(use("record_customer_commitment", case_id=CARD_CASE, action="upload_statement",
+                                      day_offset=1, time="12:00", customer_words="I promise everything"),
+                                  stop="tool_use"), reply(text("ok")))
+    turn = credit_conversation(wed, fake_llm(tmp_path, client)).turn("I will upload it tomorrow")
+    assert results(turn)["record_customer_commitment"].is_error and turn.writes == []
+
+
+def test_apology_flag_is_set_by_code_per_turn(tmp_path, wed):
+    client = ScriptedClient(reply(text("Sorry about the call.")), reply(text("Sure.")))
+    convo = credit_conversation(wed, fake_llm(tmp_path, client))
+    convo.turn("Hi")
+    convo.turn("And then?")
+    first, second = (r["system"][1]["text"] for r in client.requests)
+    assert "Acknowledge it once, in this reply" in first and "do not apologise" not in first
+    assert "do not apologise for it again" in second and "Acknowledge it once" not in second
+
+
+def test_no_apology_line_without_a_missed_callback(tmp_path, test_database):
+    clock = replay_to(datetime(2026, 11, 3, 20, 15, tzinfo=IST), THRESHOLD, admin_url=ADMIN_URL, app_url=APP_URL)
     with psycopg.connect(APP_URL, autocommit=True) as conn:
-        hub = ContextHub(conn, clock, threshold=THRESHOLD)
-        session = hub.open_session(agent_id=role, agent_role=role, purpose=
-                                   {"credit_agent": "card_dispute_servicing", "payments_agent": "payments_servicing"}[role],
-                                   customer_id="CUST-001", authenticated=True)
-        turn = Conversation(hub=hub, llm=LLM(load_config(mode="replay"), client_factory=no_network),
-                            session=session).turn(prompt)
-    assert turn.reply
-    if role == "credit_agent":
-        assert not [s for s in FORBIDDEN if s in turn.reply + " ".join(c.result for c in turn.tool_calls)]
+        client = ScriptedClient(reply(text("Hello.")))
+        credit_conversation(ContextHub(conn, clock, threshold=THRESHOLD), fake_llm(tmp_path, client)).turn("Hi")
+    extra = " ".join(b["text"] for b in client.requests[0]["system"][1:])
+    assert "missed callback" not in extra and "Acknowledge" not in extra

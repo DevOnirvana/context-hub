@@ -1,5 +1,7 @@
 # Context Hub
 
+Remember the promise, not the conversation.
+
 A customer-memory service for a bank's AI servicing agents (Payments and Credit Card Servicing).
 Any authorised agent can continue a customer's story across conversations and business lines,
 while code, not the model, decides what is remembered and who may see it. Synthetic data only.
@@ -65,8 +67,8 @@ Hub 12/12, latest-value-wins (LangGraph store put semantics) 7/12. Both were fed
 ## Limitations
 
 - Synthetic data, one customer, two business lines; no case closure.
+- A changed explanation-style preference is stored correctly, but the reply instructions still assume simple English ([results/free_chat_r2.md](results/free_chat_r2.md), prompt l).
 - Fail-closed sensitive-data check: a merchant named "Apollo Hospital Pharmacy" is rejected as health data.
-- The agent path cannot yet correct a claim: a correction is stored as a second claim ([results/free_chat.md](results/free_chat.md), prompt b).
 - Summary-based memory (T1) was not built; its results are predictions only.
 - The replay cache holds synthetic conversation text for demo determinism; a production system would keep no such cache.
 - Production pieces named, not built: per-customer encryption keys, a consent registry, a policy engine, a network service in front of the hub.

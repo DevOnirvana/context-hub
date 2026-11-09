@@ -81,10 +81,15 @@ TOOLS: dict[str, dict] = {
         "name": "propose_memory",
         "description": "Propose that the bank remembers something the customer said in this turn (a claim about "
                        "their case, or a lasting preference about how to deal with them). Quote the customer's "
-                       "words exactly. The bank's rules decide what is stored; you get the decision back.",
+                       "words exactly. When the customer corrects something they said earlier (for example a "
+                       "wrong amount), pass that claim's unit_id from your packet as corrects_unit_id. Not for "
+                       "promises: use record_customer_commitment. The bank's rules decide what is stored; you get "
+                       "the decision back.",
         "input_schema": _schema({
             "case_id": {"type": ["string", "null"], "description": "The case the words are about, or null."},
             "customer_words": {"type": "string", "description": "An exact quote from the customer's current turn."},
+            "corrects_unit_id": {"type": ["string", "null"],
+                                 "description": "The unit_id of the claim being corrected, from your packet, or null."},
         }),
     },
     "request_callback": {
@@ -97,9 +102,13 @@ TOOLS: dict[str, dict] = {
     },
     "record_customer_commitment": {
         "name": "record_customer_commitment",
-        "description": "Record something the customer promised to do by a time they gave.",
+        "description": "Record something the customer promised to do by a time they gave. Quote the promise "
+                       "exactly in customer_words.",
         "input_schema": _schema({"case_id": CASE_ID, "action": {"type": "string", "enum": sorted(CUSTOMER_ACTIONS)},
-                                 "day_offset": DAY_OFFSET, "time": TIME}),
+                                 "day_offset": DAY_OFFSET, "time": TIME,
+                                 "customer_words": {"type": "string",
+                                                    "description": "An exact quote of the promise from the customer's "
+                                                                   "current turn."}}),
     },
     "escalate_to_human": {
         "name": "escalate_to_human",
@@ -138,6 +147,7 @@ class ToolContext:
     customer_turn: str
     escalated: bool = False
     writes: list[str] = field(default_factory=list)
+    committed_words: list[str] = field(default_factory=list)  # quotes already recorded as commitments this turn
 
     def refresh(self) -> ContextPacket:
         self.packet = self.hub.get_context(self.session)
@@ -201,12 +211,36 @@ def _get_upi_status(ctx: ToolContext, case_id: str) -> Any:
     return None if status is None else status.model_dump(mode="json")
 
 
-def _propose_memory(ctx: ToolContext, case_id: str | None, customer_words: str) -> Any:
+def _check_quote(ctx: ToolContext, customer_words: str) -> None:
     # The model may only quote the customer, never author a "memory" of its own.
     if not customer_words.strip() or _normalise(customer_words) not in _normalise(ctx.customer_turn):
         raise ToolError("customer_words must be an exact quote from the customer's current turn")
+
+
+def _overlaps(a: str, b: str) -> bool:
+    a, b = _normalise(a), _normalise(b)
+    return a in b or b in a
+
+
+def _corrected_claim(ctx: ToolContext, case_id: str | None, unit_id: str):
+    """The claim being corrected must be in this turn's packet (so: this customer, and visible to
+    this agent), on the same case. Anything else gets the same 'not available' as a missing case."""
+    for unit in ctx.case(case_id).units:
+        if unit.unit_id == unit_id and unit.unit_type == "claim":
+            return unit
+    raise ToolError(NOT_AVAILABLE)
+
+
+def _propose_memory(ctx: ToolContext, case_id: str | None, customer_words: str,
+                    corrects_unit_id: str | None = None) -> Any:
+    _check_quote(ctx, customer_words)
+    # A promise already recorded this turn is a commitment, not also a claim (rehearsal round 1, c).
+    if any(_overlaps(customer_words, words) for words in ctx.committed_words):
+        return {"already_recorded": "already recorded as a commitment"}
     if case_id is not None:
         ctx.case(case_id)
+    if corrects_unit_id is not None:
+        return _correct_claim(ctx, case_id, customer_words, _corrected_claim(ctx, case_id, corrects_unit_id))
     decisions = []
     for candidate in to_candidates(extract(ctx.llm, customer_words)):
         try:
@@ -222,6 +256,24 @@ def _propose_memory(ctx: ToolContext, case_id: str | None, customer_words: str) 
         decisions.append({"type": candidate.type, "admitted": result.decision.admitted and stored is not None,
                           "reason": result.decision.reason})
     return {"decisions": decisions}
+
+
+def _correct_claim(ctx: ToolContext, case_id: str, customer_words: str, claim) -> Any:
+    """A correction is a new version of the same claim (change_reason correction, a claim_corrected
+    event), never a second claim. Only the corrected facts change; the original text is kept and
+    the customer's correction is added as correction_text. Admission still runs on it."""
+    claims = [c for c in to_candidates(extract(ctx.llm, customer_words)) if c.type == "claim"]
+    if not claims:
+        return {"decisions": [{"type": "claim", "admitted": False, "reason": "no corrected fact found in the quote"}]}
+    facts = {k: v for k, v in claims[0].fields.items() if k in ("amount_inr", "merchant", "payee")}
+    candidate = claims[0].model_copy(update={
+        "fields": {**facts, "correction_text": customer_words},
+        "corrects": UnitRef(unit_id=claim.unit_id, expected_version=claim.version)})
+    result = ctx.hub.propose_memory(ctx.session, candidate, case_id=case_id)
+    if result.unit_id:
+        ctx.writes.append(f"memory {result.unit_id} corrected")
+    return {"decisions": [{"type": "claim", "admitted": result.unit_id is not None, "reason": result.decision.reason,
+                           "corrected_unit_id": claim.unit_id}]}
 
 
 def _request_callback(ctx: ToolContext, case_id: str, day_offset: int, time: str, kind: str) -> Any:
@@ -257,7 +309,9 @@ def _request_callback(ctx: ToolContext, case_id: str, day_offset: int, time: str
     return {"accepted": True, "due_at": accepted.unit.due_at.isoformat(), "read_back": accepted.read_back}
 
 
-def _record_customer_commitment(ctx: ToolContext, case_id: str, action: str, day_offset: int, time: str) -> Any:
+def _record_customer_commitment(ctx: ToolContext, case_id: str, action: str, day_offset: int, time: str,
+                                customer_words: str) -> Any:
+    _check_quote(ctx, customer_words)
     ctx.case(case_id)
     due_at = resolve(_when(day_offset, time), ctx.hub.clock.now())
     try:
@@ -265,6 +319,7 @@ def _record_customer_commitment(ctx: ToolContext, case_id: str, action: str, day
     except CommitmentRefused as exc:
         raise ToolError(f"not recorded: {exc.decision.reason}") from exc
     ctx.writes.append(f"customer commitment {result.unit.unit_id}")
+    ctx.committed_words.append(customer_words)
     return {"recorded": True, "read_back": result.read_back}
 
 

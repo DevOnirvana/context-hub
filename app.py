@@ -158,7 +158,7 @@ def run_pending() -> None:
             ss.chat.append(("notice", "The agent handed this conversation to a human. Retry starts a new one."))
             ss.retry = {**pending, "new_conversation": True}
         ss.view = {"source": pending["label"], "packet": result.packet, "calls": result.tool_calls,
-                   "instructions": reply_instructions(result.packet),
+                   "instructions": result.instructions,
                    "access": queries.access_log(ss.ui_conn, after=before)}
         status.update(label=f"Done in {elapsed()}: {len(result.tool_calls)} tool call(s), {result.steps} model call(s)",
                       state="complete", expanded=False)

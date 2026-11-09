@@ -16,6 +16,9 @@ class Statement(BaseModel):
     disputed_amount_inr: int
     disputed_note: str
     provisional_credit_inr: int
+    # Says in words what the numbers already mean (SPEC 17.27), so a reader of the tool result,
+    # human or model, never has to guess whether the credit is in the total.
+    total_due_note: str
 
 
 def get_statement(card_last4: str, now: datetime) -> Statement:
@@ -26,4 +29,7 @@ def get_statement(card_last4: str, now: datetime) -> Statement:
             total, minimum, credit = adj["total_due_inr"], adj["minimum_due_inr"], adj["amount_inr"]
     return Statement(card_last4=card_last4, statement_date=s["statement_date"], due_date=s["due_date"],
                      total_due_inr=total, minimum_due_inr=minimum, disputed_amount_inr=s["disputed_amount_inr"],
-                     disputed_note=s["disputed_note"], provisional_credit_inr=credit)
+                     disputed_note=s["disputed_note"], provisional_credit_inr=credit,
+                     total_due_note=(f"total_due_inr already includes the provisional credit of Rs {credit:,}; "
+                                     "it is the amount payable this month" if credit else
+                                     "no provisional credit applied; total_due_inr includes the disputed amount"))
