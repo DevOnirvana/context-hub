@@ -1,6 +1,6 @@
 # Context Hub
 
-Remember the promise, not the conversation.
+The 9 AM test: the memory behind banking AI agents.
 
 A customer-memory service for a bank's AI servicing agents (Payments and Credit Card Servicing).
 Any authorised agent can continue a customer's story across conversations and business lines,
